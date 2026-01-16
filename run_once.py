@@ -1,17 +1,15 @@
-from param_class import Params
-from engine import run
+from param_class import SelfExcitation
+from self_excitation import self_excitation
 from pathlib import Path
 
-params = Params(
+params = SelfExcitation(
 dt=30.0,
-T=390,
-beta=2.0,
-gamma_m=1.5,
-gamma_t=0.5,
-rho_self=0.8,
+T=390, # 390
+alpha_moneyness=10.0,
+alpha_time=1.0,
+beta=0.06,
 mu_intensity=0.01,
-w=0.3,
-tau=[[0.9, 0.3], [0.3, 0.9]],
+w_volume=0.5,
 contract_volume_mean=0.5,
 contract_volume_std=0.8,
 volume_base=1.0,
@@ -36,5 +34,5 @@ mu=0.08,
 rho=-0.7,
 )
 
-
-run(params, save=True, savedir=Path.cwd())
+save = Path.cwd() / "run_self_excitation_result"
+self_excitation(params, save=True, savedir=save)

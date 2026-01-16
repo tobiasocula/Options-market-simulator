@@ -115,6 +115,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             
             return update_trades_ob(bids[1:], asks, price, buy, vol - bid_order["volume"], time, bids[0]["price"], new_trades)
         
+    # sort item in already sorted array in O(log(n)) time
     def insert_bin(arr, item, field="price"):
         if arr == [] or arr is None:
             return [item]
@@ -160,8 +161,11 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
     intensities_keep = np.zeros((M, N, 2, T))
     num_events_keep = np.zeros(T)
     lambda_keep = np.zeros(T)
-    buys_probs = np.empty((M, N, 2, T))
-    limit_probs = np.empty((M, N, 2, T))
+    
+    buys_probs = np.full((M, N, 2, T), np.nan)
+    limit_probs = np.full((M, N, 2, T), np.nan)
+
+    volumes = np.full((M, N, 2, T), np.nan)
 
     # initialize order books first (before running loop)
     for m, n, k in itertools.product(range(M), range(N), range(2)):
@@ -235,23 +239,14 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         # step 2: generate potential new orders
         # do this for all contracts
 
-        print('excitations before:')
-        print(excitations[:, :, 0])
-        print()
-
         excitations *= np.exp(-params.beta * params.dt)  # decay past
-        print('after 1')
-        print(excitations[:, :, 0])
         excitations += params.mu_intensity             # add baseline
-        print('after 1')
-        print(excitations[:, :, 0])
 
         for this_exp, this_strike, this_type in itertools.product(range(M), range(N), range(2)):
             this_trades = trades[this_exp, this_strike, this_type, T_current]
 
             # account for moneyness and expiry time
             time_till_expiry = (params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
-            print('time till expiry:', time_till_expiry)
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
             excitations[this_exp, this_strike, this_type] += np.exp(
                 -params.alpha_moneyness * moneyness * moneyness
@@ -260,7 +255,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
 
             if this_trades is None or this_trades == []:
                 continue
-            print('ADDING', len(this_trades), 'MANY TRADES')
             for entry in this_trades:
                 # entry is dict with fields: price, time, volume
                 kernel = np.exp(
@@ -277,9 +271,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         num_events_keep[T_current] = num_events
 
         intensities_keep[:, :, :, T_current] = excitations[:, :, :]
-
-        print('num events:', num_events)
-        print('lambda:', Lambda)
 
         for _ in range(num_events):
 
@@ -301,8 +292,24 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
 
             vol = max(1, vol) # round to nearest non-zero integer
 
-            eta_buy = params.buy_order_base_param + params.buy_order_vol_param * vol
-            eta_limit = params.limit_order_base_param + params.limit_order_vol_param * vol
+            ob_bids = orderbooks[(chosen_exp, chosen_strike, chosen_type, 0, T_current - 1)]
+            ob_asks = orderbooks[(chosen_exp, chosen_strike, chosen_type, 1, T_current - 1)]
+
+            bid_vol_sum = sum([entry["volume"] for entry in ob_bids]) if ob_bids is not None else 0
+            ask_vol_sum = sum([entry["volume"] for entry in ob_asks]) if ob_asks is not None else 0
+
+            imbalance = (bid_vol_sum - ask_vol_sum) / (bid_vol_sum + ask_vol_sum + 1e-5)
+
+            volumes[chosen_exp, chosen_strike, chosen_type, T_current] = vol
+
+            spread = abs(ob_bids[0]["price"] - ob_asks[0]["price"]) if (
+                ob_asks != [] and ob_bids != []
+                and
+                ob_asks is not None and ob_bids is not None
+            ) else 0.0
+
+            eta_buy = params.buy_order_base_param + params.buy_order_imbalance_param * imbalance
+            eta_limit = params.limit_order_base_param + params.limit_order_vol_param * vol + params.limit_order_spread_param * spread
 
             prob_buy = 1 / (1 + np.exp(-eta_buy))
             prob_limit = 1 / (1 + np.exp(-eta_limit))
@@ -324,9 +331,13 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                                         params.risk_free, params.dividend_rate,
                                         params.init_vola)
 
-            price = max(theo, theo*0.95 + np.random.exponential(0.001))  # Floor + noise
+            price = max(theo, theo * 0.95 + np.random.exponential(0.001))  # Floor + noise
+            
             if limit:
-                price += np.random.exponential(params.limit_order_distance_param)
+                if buy:
+                    price += np.random.exponential(params.limit_order_distance_param * spread)
+                else:
+                    price -= np.random.exponential(params.limit_order_distance_param * spread)
 
             if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is None or trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] == []:
                 ltp = None
@@ -371,6 +382,8 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                 trades[chosen_exp, chosen_strike, chosen_type, T_current].append(t)
 
             # update overview
+            new_best_bid = None
+            new_best_ask = None
             if new_bids is not None and new_bids != []:
                 new_best_bid = new_bids[0]["price"]
             if new_asks is not None and new_asks != []:
@@ -402,10 +415,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                 ) else None
             }
 
-    # compute total buy and limit order probabilities (over time)
-    buys_probs_mean = np.mean(buys_probs, axis=-1)
-    limit_probs_mean = np.mean(limit_probs, axis=-1)
-
     if save:
         assert savedir is not None, AssertionError()
         np.save(savedir / "orderbooks.npy", orderbooks)
@@ -416,10 +425,9 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         np.save(savedir / "intensities_keep.npy", intensities_keep)
         np.save(savedir / "num_events.npy", num_events_keep)
         np.save(savedir / "lambda_keep.npy", lambda_keep)
-        np.save(savedir / "buys_probs.npy", buys_probs)
+        np.save(savedir / "volumes.npy", volumes)
         np.save(savedir / "limit_probs.npy", limit_probs)
-        np.save(savedir / "buys_probs_mean.npy", buys_probs_mean)
-        np.save(savedir / "limit_probs_mean.npy", limit_probs_mean)
+        np.save(savedir / "buys_probs.npy", buys_probs)
 
     else:
         return (
@@ -431,10 +439,9 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             intensities_keep,
             lambda_keep,
             num_events_keep,
-            buys_probs,
+            volumes,
             limit_probs,
-            buys_probs_mean,
-            limit_probs_mean
+            buys_probs
         )
     
 

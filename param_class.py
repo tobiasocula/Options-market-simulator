@@ -44,14 +44,13 @@ class SelfExcitation(BaseModel):
     mu: float # asset yearly expected return
     rho: float # correlation volatility and asset price
 
-    # limit_order_base_param: float
-    # limit_order_vol_param: float
+    limit_order_base_param: float
+    limit_order_vol_param: float
+    limit_order_spread_param: float
+    limit_order_distance_param: float
 
-    # limit_order_distance_param: float
-
-    # buy_order_base_param: float
-    # buy_order_vol_param: float
-
+    buy_order_base_param: float
+    buy_order_imbalance_param: float
 
 class CrossExcitation(BaseModel):
 

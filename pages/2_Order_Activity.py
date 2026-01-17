@@ -8,20 +8,23 @@ from params_for_self_excitation import params
 
 st.subheader("Order activity & Trades")
 
-intensities_mean_bids = pd.DataFrame(
-    np.mean(st.session_state.intensities[:, :, 0, :], axis=-1),
-    columns=params.strike_prices,
-    index=params.expiry_dts
-)
-
-intensities_mean_asks = pd.DataFrame(
-    np.mean(st.session_state.intensities[:, :, 1, :], axis=-1),
-    columns=params.strike_prices,
-    index=params.expiry_dts
-)
-
 M = len(params.expiry_dts)
 N = len(params.strike_prices)
+
+calls_intensities = np.nanmean(st.session_state.intensities[:, :, 0, :], axis=-1)
+puts_intensities = np.nanmean(st.session_state.intensities[:, :, 1, :], axis=-1)
+
+calls_intensities_df = pd.DataFrame(
+    calls_intensities,
+    columns=[str(x) for x in params.strike_prices],
+    index=[str(x) for x in params.expiry_dts],
+)
+
+puts_intensities_df = pd.DataFrame(
+    puts_intensities,
+    columns=[str(x) for x in params.strike_prices],
+    index=[str(x) for x in params.expiry_dts],
+)
 
 all_intensities = go.Figure()
 for m, n, k in itertools.product(range(M), range(N), range(2)):
@@ -33,20 +36,29 @@ for m, n, k in itertools.product(range(M), range(N), range(2)):
         )
     )
 
-fig_bids_mean = px.imshow(
-    intensities_mean_bids,
+fig_calls_intensities = px.imshow(
+    calls_intensities_df,
     color_continuous_scale="viridis",
-    zmin=intensities_mean_bids.values.min(),
-    zmax=intensities_mean_bids.values.max()
+    zmin=calls_intensities_df.values.min(),
+    zmax=calls_intensities_df.values.max(),
+    labels=dict(x="Strike prices", y="Expiry dates"),
+    aspect="auto"
 )
-print('intensities_mean_bids:', intensities_mean_bids)
 
-fig_asks_mean = px.imshow(
-    intensities_mean_asks,
+fig_puts_intensities = px.imshow(
+    puts_intensities_df,
     color_continuous_scale="viridis",
-    zmin=intensities_mean_asks.values.min(),
-    zmax=intensities_mean_asks.values.max()
+    zmin=puts_intensities_df.values.min(),
+    zmax=puts_intensities_df.values.max(),
+    labels=dict(x="Strike prices", y="Expiry dates"),
+    aspect="auto"
 )
+
+fig_puts_intensities.update_yaxes(type="category")
+fig_calls_intensities.update_yaxes(type="category")
+
+print('fig puts intensities:'); print(fig_puts_intensities)
+print('associated df:'); print(puts_intensities_df)
 
 lambda_fig = go.Figure()
 lambda_fig.add_trace(go.Scatter(
@@ -55,6 +67,9 @@ lambda_fig.add_trace(go.Scatter(
 
 num_events_bar = px.bar(st.session_state.num_events)
 
+events_per_contract = go.Figure()
+#for m, n, k in itertools.product(range(M), range(N), range(2)):
+
 st.write("All trades")
 
 alltrades_df = pd.DataFrame(st.session_state.all_trades[-1],
@@ -62,11 +77,11 @@ alltrades_df = pd.DataFrame(st.session_state.all_trades[-1],
 
 st.dataframe(alltrades_df)
 
-st.write("Trading intensities (mean of bids)")
-st.plotly_chart(fig_bids_mean, key="bids_mean")
+st.write("Trading intensities (mean of calls)")
+st.plotly_chart(fig_calls_intensities, key="calls_mean")
 
-st.write("Trading intensities (mean of asks)")
-st.plotly_chart(fig_asks_mean, key="asks_mean")
+st.write("Trading intensities (mean of puts)")
+st.plotly_chart(fig_puts_intensities, key="puts_mean")
 
 st.write("Intensities over time (combined)")
 st.plotly_chart(lambda_fig)

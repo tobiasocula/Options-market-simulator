@@ -240,7 +240,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         # do this for all contracts
 
         excitations *= np.exp(-params.beta * params.dt)  # decay past
-        excitations += params.mu_intensity             # add baseline
 
         for this_exp, this_strike, this_type in itertools.product(range(M), range(N), range(2)):
             this_trades = trades[this_exp, this_strike, this_type, T_current]
@@ -248,7 +247,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             # account for moneyness and expiry time
             time_till_expiry = (params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
-            excitations[this_exp, this_strike, this_type] += np.exp(
+            excitations[this_exp, this_strike, this_type] += params.mu * np.exp(
                 -params.alpha_moneyness * moneyness * moneyness
                 -params.alpha_time * time_till_expiry
             )
@@ -260,7 +259,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                 kernel = np.exp(
                     params.w_volume * np.log(entry["volume"] + 1e-8)
                 )
-                excitations[this_exp, this_strike, this_type, T_current] += kernel
+                excitations[this_exp, this_strike, this_type] += kernel
 
 
         Lambda = np.sum(excitations)
@@ -320,24 +319,34 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             buys_probs[chosen_exp, chosen_strike, chosen_type, T_current] = prob_buy
             limit_probs[chosen_exp, chosen_strike, chosen_type, T_current] = prob_limit
 
-            years_till_expiry = (params.expiry_dts[chosen_exp] - params.dt * T_current) / (3600 * 24 * 365)
+            years_till_expiry = abs(params.expiry_dts[chosen_exp] - params.dt * T_current) / (3600 * 24 * 365)
             # determine price
             if chosen_type == 0:  # call
                 theo = black_scholes_call(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
-                                        params.init_vola)
+                                        sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
+                )
             else:  # put
                 theo = black_scholes_put(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
-                                        params.init_vola)
+                                        sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
+                )
+                
+            intrinsic = max(
+                assetdata[0, T_current] - params.strike_prices[chosen_strike], 0
+                ) if chosen_type == 0 else max(
+                    params.strike_prices[chosen_strike] - assetdata[0, T_current], 0
+                    )
 
-            price = max(theo, theo * 0.95 + np.random.exponential(0.001))  # Floor + noise
+            price = max(intrinsic, theo)
             
             if limit:
                 if buy:
                     price += np.random.exponential(params.limit_order_distance_param * spread)
                 else:
                     price -= np.random.exponential(params.limit_order_distance_param * spread)
+
+            price = max(price, 0.01)
 
             if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is None or trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] == []:
                 ltp = None
@@ -443,8 +452,3 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             limit_probs,
             buys_probs
         )
-    
-
-
-
-

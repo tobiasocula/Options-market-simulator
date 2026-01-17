@@ -1,5 +1,8 @@
 ### Options trading simulator
 
+Check out full documentation:
+https://tobiasocula.github.io/Options-market-simulator/
+
 I made this after finishing my other market simulator which I've built:
 
 https://github.com/tobiasocula/market-simulator

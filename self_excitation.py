@@ -209,7 +209,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         for _ in range(n_orders_side):
             offset = np.random.exponential(scale_price)  # Exp dist from fair
             order = {
-                "price": fair_price + offset,
+                "price": max(0.01, fair_price + offset), # limit to some lower bound
                 "volume": np.random.lognormal(params.contract_volume_mean, params.contract_volume_std),
                 "time": 0.0
             }
@@ -252,6 +252,8 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                 -params.alpha_moneyness * moneyness * moneyness
                 -params.alpha_time * time_till_expiry
             )
+
+            print('this_trades:', this_trades)
 
             if this_trades is None or this_trades == []:
                 continue

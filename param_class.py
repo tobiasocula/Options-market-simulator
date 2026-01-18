@@ -54,20 +54,20 @@ class SelfExcitation(BaseModel):
 
 class CrossExcitation(BaseModel):
 
+    # options trading
+    gamma_m: float # determines strength between contract's moneynesses
+    gamma_t: float # determines strength between contract's expiry dates
+    tau: list[list[float]] # cross-type intensity parameter
+    rho: float # accounts for self-excitation
+    mu_intensity: float # the static intensity per contract (also constant for all contracts here)
+    beta: float # decay parameter, for this model, this is constant for all contracts k,j
+    w_volume: float # determines strength of order volume
+    alpha_moneyness: float
+    alpha_time: float
+
     # generic
     dt: float # time increment (amount of time to pass per timestamp in simulation)
     T: int # amount of timesteps
-
-    # total time to run is dt * T
-
-    # options trading
-    beta: float # decay parameter, for this model, this is constant for all contracts k,j
-    gamma_m: float # determines strength between contract's moneynesses
-    gamma_t: float # determines strength between contract's expiry dates
-    rho_self: float # self-excitation parameter
-    tau: list[list[float]] # cross-type intensity parameter
-    mu_intensity: float # the static intensity per contract (also constant for all contracts here)
-    w: float # determines strength of order volume
 
     # volume
     contract_volume_mean: float | int # mean for lognormal sampling of option contract size
@@ -81,10 +81,6 @@ class CrossExcitation(BaseModel):
     strike_prices: list[float] # strike prices
     risk_free: float
     dividend_rate: float
-
-    #lm_params: list[float] # parameters for limit order probability determination
-    #bs_params: list[float] # parameters for buy order probability determination
-    #limit_dist: float # parameter for exponentially distributed distance from ltp (if limit order)
 
     # orderbook init
     base_scale_init_orders: float # base price scale (exponential distribution for price; during construction of initial order book)
@@ -102,3 +98,11 @@ class CrossExcitation(BaseModel):
     xi: float # volatility of volatility
     mu: float # asset yearly expected return
     rho: float # correlation volatility and asset price
+
+    limit_order_base_param: float
+    limit_order_vol_param: float
+    limit_order_spread_param: float
+    limit_order_distance_param: float
+
+    buy_order_base_param: float
+    buy_order_imbalance_param: float

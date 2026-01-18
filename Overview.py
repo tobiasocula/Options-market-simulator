@@ -25,7 +25,7 @@ st.dataframe(param_df)
 st.session_state.assetdata = np.load(save / "assetdata.npy", allow_pickle=True)
 st.session_state.lambdas = np.load(save / "lambda_keep.npy", allow_pickle=True)
 st.session_state.overviews = np.load(save / "overviews.npy", allow_pickle=True)
-st.session_state.time_values = np.linspace(0, params.dt * params.T, int(params.dt))
+st.session_state.time_values = np.linspace(0, params.dt * params.T, int(params.T))
 st.session_state.all_trades = np.load(save / "all_trades.npy", allow_pickle=True)
 st.session_state.intensities = np.load(save / "intensities_keep.npy", allow_pickle=True)
 st.session_state.expiry_dates = params.expiry_dts
@@ -34,6 +34,7 @@ st.session_state.num_events = np.load(save / "num_events.npy", allow_pickle=True
 st.session_state.lim_probs = np.load(save / "limit_probs.npy", allow_pickle=True)
 st.session_state.buy_probs = np.load(save / "buys_probs.npy", allow_pickle=True)
 st.session_state.volumes = np.load(save / "volumes.npy", allow_pickle=True)
+st.session_state.num_events_contracts = np.load(save / "num_events_contracts.npy", allow_pickle=True)
 
 price_fig = go.Figure()
 vola_fig = go.Figure()

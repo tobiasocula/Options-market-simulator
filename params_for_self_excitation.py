@@ -2,11 +2,11 @@ from param_class import SelfExcitation
 
 params = SelfExcitation(
 dt=30.0,
-T=390, # 390
+T=390,
 alpha_moneyness=10.0,
 alpha_time=1.0,
-beta=0.06,
-mu_intensity=0.01,
+beta=0.03,
+mu_intensity=0.03,
 w_volume=0.5,
 contract_volume_mean=0.5,
 contract_volume_std=0.8,

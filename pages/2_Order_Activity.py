@@ -57,18 +57,15 @@ fig_puts_intensities = px.imshow(
 fig_puts_intensities.update_yaxes(type="category")
 fig_calls_intensities.update_yaxes(type="category")
 
-print('fig puts intensities:'); print(fig_puts_intensities)
-print('associated df:'); print(puts_intensities_df)
-
 lambda_fig = go.Figure()
 lambda_fig.add_trace(go.Scatter(
     x=st.session_state.time_values,
     y=st.session_state.lambdas))
 
-num_events_bar = px.bar(st.session_state.num_events)
-
-events_per_contract = go.Figure()
-#for m, n, k in itertools.product(range(M), range(N), range(2)):
+num_events_bar = px.bar(
+    x=st.session_state.time_values,
+    y=st.session_state.num_events,
+    labels=dict(x="Time (seconds after start)", y="Amount of orders"))
 
 st.write("All trades")
 

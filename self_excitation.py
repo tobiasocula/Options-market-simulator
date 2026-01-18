@@ -161,6 +161,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
     intensities_keep = np.zeros((M, N, 2, T))
     num_events_keep = np.zeros(T)
     lambda_keep = np.zeros(T)
+    num_events_all_contracts = np.zeros((M, N, 2, T))
     
     buys_probs = np.full((M, N, 2, T), np.nan)
     limit_probs = np.full((M, N, 2, T), np.nan)
@@ -276,6 +277,8 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             probs_per_contract = excitations / Lambda # same shape as intensities_prime
             chosen_idx = sample_multidim(probs_per_contract)
             chosen_exp, chosen_strike, chosen_type = chosen_idx
+
+            num_events_all_contracts[chosen_exp, chosen_strike, chosen_type, T_current] += 1
 
             # generate order for this contract
 
@@ -437,6 +440,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         np.save(savedir / "volumes.npy", volumes)
         np.save(savedir / "limit_probs.npy", limit_probs)
         np.save(savedir / "buys_probs.npy", buys_probs)
+        np.save(savedir / "num_events_contracts.npy", num_events_all_contracts)
 
     else:
         return (
@@ -450,5 +454,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
             num_events_keep,
             volumes,
             limit_probs,
-            buys_probs
+            buys_probs,
+            num_events_all_contracts
         )

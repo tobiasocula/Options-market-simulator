@@ -482,7 +482,7 @@
 \end{aligned}
 \end{equation}\]</div>
 <p>where</p>
-<p><span class="arithmatex">\(\Delta M=\text{log}(S_j/K)-\text{log}(S_i/K)\)</span></p>
+<p><span class="arithmatex">\(\Delta M=\text{log}(K_j/S)-\text{log}(K_i/S)\)</span></p>
 <p>and</p>
 <p><span class="arithmatex">\(\Delta t=T_{i}^\text{expiry}-T_{j}^\text{expiry}\)</span></p>
 <p>This equation accounts for the following things. The first term is the static intensity, depending on the moneyness and expiry date of the contract. The second accounts for the impact over all trades over all contracts. Within the sum, we account for the order's volume, the difference in moneynesses between contracts, the difference in expiry time and how long ago each trade was. We also account for self-excitation: <span class="arithmatex">\(\rho_{self}\)</span> boosts intensity if we encounter the contract itself in the sum, and we also account for the difference in impact between put- and call contracts by multiplying by <span class="arithmatex">\(\tau_{ij}\)</span>.</p>

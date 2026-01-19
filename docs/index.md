@@ -70,7 +70,7 @@ In this more complete version of the Hawkes process, we also account for the imp
 
 where
 
-$\Delta M=\text{log}(S_j/K)-\text{log}(S_i/K)$
+$\Delta M=\text{log}(K_j/S)-\text{log}(K_i/S)$
 
 and
 

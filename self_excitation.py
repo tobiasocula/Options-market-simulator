@@ -243,7 +243,7 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
         excitations *= np.exp(-params.beta * params.dt)  # decay past
 
         for this_exp, this_strike, this_type in itertools.product(range(M), range(N), range(2)):
-            this_trades = trades[this_exp, this_strike, this_type, T_current]
+            this_trades = trades[this_exp, this_strike, this_type, T_current - 1]
 
             # account for moneyness and expiry time
             time_till_expiry = (params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
@@ -252,8 +252,6 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                 -params.alpha_moneyness * moneyness * moneyness
                 -params.alpha_time * time_till_expiry
             )
-
-            print('this_trades:', this_trades)
 
             if this_trades is None or this_trades == []:
                 continue
@@ -385,13 +383,8 @@ def self_excitation(params: SelfExcitation, save=False, savedir=None):
                     "call/put": "call" if chosen_type == 0 else "put"
                 })
 
-            # copy trades from previous timestamp
-            if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is None:
-                trades[chosen_exp, chosen_strike, chosen_type, T_current] = []
-            else:
-                trades[chosen_exp, chosen_strike, chosen_type, T_current] = trades[chosen_exp, chosen_strike, chosen_type, T_current - 1][:]
-
             # add new trades
+            trades[chosen_exp, chosen_strike, chosen_type, T_current] = []
             for t in new_trades:
                 trades[chosen_exp, chosen_strike, chosen_type, T_current].append(t)
 

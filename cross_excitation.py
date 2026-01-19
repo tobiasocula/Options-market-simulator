@@ -129,6 +129,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
     assetdata = np.empty((2, T))
     trades = np.empty((M, N, 2, T), dtype=object) # list of dicts
     all_trades = np.empty(T, dtype=object) # list of dicts, with fields
+    kernels = np.zeros((M, N, 2, T))
     # price, time, volume, expiry, strike, call/put
     overviews = np.empty((M, N, 2, T), dtype=object) # list of dicts with fields:
     # best bid, best ask, spread, volume, LTP, moneyness, IV
@@ -203,6 +204,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
     # begin main loop
     for T_current in range(1, T):
+        print('T current:', T_current)
 
         # step 1: update price
         z1 = np.random.normal()
@@ -224,37 +226,49 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
             time_till_expiry = (params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
-            excitations[this_exp, this_strike, this_type] += params.mu * np.exp(
+            adding_term = params.mu * np.exp(
                 -params.alpha_moneyness * moneyness * moneyness
                 -params.alpha_time * time_till_expiry
             )
+            #print('adding term:', adding_term)
+            excitations[this_exp, this_strike, this_type] += adding_term
+            #print('adding term (from static excitation):', adding_term)
 
             for other_exp, other_strike, other_type in itertools.product(range(M), range(N), range(2)):
-                trade = trades[other_exp, other_strike, other_type, T_current]
+                trade = trades[other_exp, other_strike, other_type, T_current - 1]
                 if trade is None:
                     continue
                 for entry in trade:
-                    kernel = ((1 if (
+                    delta_t = params.gamma_t * np.abs(params.expiry_dts[this_exp] - params.expiry_dts[other_exp]) / (365 * 24 * 3600)
+                    m_i = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
+                    m_j = np.log(params.strike_prices[other_strike] / assetdata[0, T_current])
+                    delta_m = params.gamma_m * np.abs(m_i - m_j)
+                    first_part = (1 if (
                         this_exp == other_exp and this_strike == other_strike and this_type == other_type
                         ) else 0) + params.tau[this_type][other_type]
-                        ) * params.w_volume * entry["volume"] * np.exp(
-                        -params.gamma_m * np.abs(
-                            np.log(params.strike_prices[other_strike] / assetdata[0, T_current]
-                                   -params.strike_prices[this_strike] / assetdata[0, T_current]
-                                   )
-                        ) - params.gamma_t * np.abs(params.expiry_dts[this_exp] - params.expiry_dts[other_exp]) / (365 * 24 * 3600)
-                    )
+                    volume_part = params.w_volume * entry["volume"]
+                    kernel = first_part * volume_part * np.exp(- delta_m - delta_t)
+                    # print('volume part:', volume_part)
+                    # print('time decay:', time_decay)
+                    # print('delta m:', delta_m)
+                    # print('delta t:', delta_t)
+                    # print('kernel:', kernel)
+                    # print()
+                    #print('kernel:', kernel)
+                    kernels[this_exp, this_strike, this_type, T_current] = kernel
                     excitations[this_exp, this_strike, this_type] += kernel
 
         Lambda = np.sum(excitations)
+        print('Lambda:', Lambda)
 
         lambda_keep[T_current] = Lambda
 
         num_events = np.random.poisson(Lambda * params.dt)
         num_events_keep[T_current] = num_events
 
-        intensities_keep[:, :, :, T_current] = excitations[:, :, :]
+        print('num events:', num_events)
 
+        intensities_keep[:, :, :, T_current] = excitations[:, :, :]
         for _ in range(num_events):
 
             probs_per_contract = excitations / Lambda # same shape as intensities_prime
@@ -334,7 +348,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
             price = max(price, 0.01)
 
-            if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is None:
+            if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is None or trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] == []:
                 ltp = None
             else:
                 ltp = trades[chosen_exp, chosen_strike, chosen_type, T_current - 1][-1]["price"]
@@ -344,6 +358,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                 asks=orderbooks[(chosen_exp, chosen_strike, chosen_type, 1, T_current - 1)],
                 price=price, buy=buy, vol=vol, time=params.dt * T_current, ltp=ltp
             )
+            #print('new trades:'); print(new_trades)
             # Update global structures
             orderbooks[(chosen_exp, chosen_strike, chosen_type, 0, T_current)] = new_bids
             orderbooks[(chosen_exp, chosen_strike, chosen_type, 1, T_current)] = new_asks
@@ -366,14 +381,10 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                     "call/put": "call" if chosen_type == 0 else "put"
                 })
 
-            # copy trades from previous timestamp
-            if trades[chosen_exp, chosen_strike, chosen_type, T_current - 1] is not None:
-                trades[chosen_exp, chosen_strike, chosen_type, T_current] = trades[chosen_exp, chosen_strike, chosen_type, T_current - 1][:]
-
+            trades[chosen_exp, chosen_strike, chosen_type, T_current] = []
             # add new trades
+            #print('adding new trades:', len(new_trades))
             for t in new_trades:
-                if trades[chosen_exp, chosen_strike, chosen_type, T_current] is None:
-                    trades[chosen_exp, chosen_strike, chosen_type, T_current] = []
                 trades[chosen_exp, chosen_strike, chosen_type, T_current].append(t)
 
             # update overview
@@ -424,6 +435,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
         np.save(savedir / "limit_probs.npy", limit_probs)
         np.save(savedir / "buys_probs.npy", buys_probs)
         np.save(savedir / "num_events_contracts.npy", num_events_all_contracts)
+        np.save(savedir / "kernels.npy", kernels)
 
     else:
         return (
@@ -438,5 +450,6 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
             volumes,
             limit_probs,
             buys_probs,
-            num_events_all_contracts
+            num_events_all_contracts,
+            kernels
         )

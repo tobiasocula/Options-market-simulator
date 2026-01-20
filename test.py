@@ -1,10 +1,11 @@
+import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import pandas as pd
 
-import numpy as np
+b = go.Figure()
 
-a = np.empty((2, 2), dtype=object)
-print(a)
-print()
-print(a[0, 0])
+x = np.linspace(0, 100, 10)
+y = np.random.uniform(0, 1, 10)
+b.add_trace(go.Bar(x=x, y=y))
+b.update_layout(xaxis_title="x", yaxis_title="y")
+b.show()

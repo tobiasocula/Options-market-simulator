@@ -114,7 +114,9 @@ lambda_fig.update_layout(
 
 st.write("All trades")
 
-alltrades_df = pd.DataFrame(st.session_state.all_trades[-1],
+max_trade_count = min(100, len(st.session_state.all_trades))
+
+alltrades_df = pd.DataFrame(st.session_state.all_trades[:max_trade_count],
     columns=["price", "time", "volume", "expiry", "strike", "call/put"])
 
 st.dataframe(alltrades_df)

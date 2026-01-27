@@ -9,13 +9,13 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
     # first part is exact same as self excitation
 
-    def implied_vol_call(C_mkt, S, K, T, r, q, min_price=0.01, max_tries=3):
+    def implied_vol_call(C_mkt, S, K, T, r, q, min_price=0.01):
 
         C_mkt = max(C_mkt, min_price)
 
         try:
             return brentq(
-                lambda sigma: black_scholes_call(S, K, T, r, q, sigma) - C_mkt,
+                lambda sigma: black_scholes_call(S, K, T, r, q, sigma)[0] - C_mkt,
                 0.0, 10.0
             )
         except:
@@ -35,12 +35,35 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
 
-        return S * np.exp(-q * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        # Option price
+        call_price = S * np.exp(-q * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+
+        # Greeks
+        delta = np.exp(-q * T) * norm.cdf(d1)
+        gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
+        vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) * 0.01  # Scaled for 1% change in volatility
+        theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
+                r * K * np.exp(-r * T) * norm.cdf(d2) +
+                q * S * np.exp(-q * T) * norm.cdf(d1)) / 365  # Per day
+        rho = K * T * np.exp(-r * T) * norm.cdf(d2) * 0.01  # Scaled for 1% change in interest rate
+
+        return call_price, delta, gamma, vega, theta, rho
 
     def black_scholes_put(S, K, T, r, q, sigma):
-        call = black_scholes_call(S, K, T, r, q, sigma)
-        return call - S * np.exp(-q * T) + K * np.exp(-r * T)
-    
+        (
+            call_price, delta_call, gamma_call, vega_call, theta_call, rho_call
+        ) = black_scholes_call(S, K, T, r, q, sigma)
+
+        put_price = call_price - S * np.exp(-q * T) + K * np.exp(-r * T)
+
+        delta_put = delta_call - np.exp(-q * T)
+        gamma_put = gamma_call
+        vega_put = vega_call
+        theta_put = theta_call + r * K * np.exp(-r * T) - q * S * np.exp(-q * T)
+        rho_put = rho_call - K * T * np.exp(-r * T)
+
+        return put_price, delta_put, gamma_put, vega_put, theta_put, rho_put
+        
     def rev(a):        
         n = len(a)
         return [a[n - k] for k in range(1, n+1)]
@@ -125,32 +148,67 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
     N = len(params.strike_prices)
     T = params.T
 
+    """
+    keep track of statistics while running sim
+
+    -orderbooks: raw orderbook data, for each contract (n, m, k), and for buy/sellside
+    and every timestamp, keep track of current orderbook: meaning price, volume and time
+    of order. orderbook gets updated each time a new trade happens (ie. order reduced/removed)
+
+    -assetdata: for each timestamp, contains volatility and price value.
+
+    -trades: for each contract (n, m, k) and each timestamp, keep track of all the trades
+    that happened for this contract. the trades are cumulative (meaning a trade at time T
+    could have happened between t=0 and t=T-1)
+
+    -all_trades: keep track of every trade that happened over all contracts, for each
+    timestamp. also cumulative. entries are dicts with fields the same for trades, but
+    with extra fields including expiry, strike and type index.
+
+    -kernels: for each contract (n, m, k) and timestamp, record the intensity of the kernel
+    calculation. useful for tracking cross correlations between contracts and activity.
+
+    -overviews: for each timestamp and contract, we keep an overview to track best bids,
+    best asks, spreads, etc.
+
+    -overviews_struct: different way of storing/formatting overviews. stores one dict
+    per timestamp: dict has fields; strike, expiry, type, best_bid, best_ask, ...
+
+    -buy_probs and limit_probs: for each contract and time, keep track of fraction
+    of amount of buy vs sell orders and limit vs market orders.
+
+    -num_events_all_contracts: keeps track of number of orders generated per contract and time.
+
+    -intensities(keep): per contract and timestamp, record individual intensity contribution.
+
+    -lambda(keep): per timestamp, record total intensity accross all contracts.
+
+    -traded_volumes: traded volumes per contract and timestamp (NOT volumes from orders, but traded)
+
+    """
+
     orderbooks = np.empty((M, N, 2, 2, T), dtype=object) # list of dicts
     assetdata = np.empty((2, T))
     trades = np.empty((M, N, 2, T), dtype=object) # list of dicts
     all_trades = np.empty(T, dtype=object) # list of dicts, with fields
     kernels = np.zeros((M, N, 2, T))
-    # price, time, volume, expiry, strike, call/put
-    overviews = np.empty((M, N, 2, T), dtype=object) # list of dicts with fields:
-    # best bid, best ask, spread, volume, LTP, moneyness, IV
-
-    assetdata[0, 0] = params.init_open_price
-    assetdata[1, 0] = params.init_vola
-
+    overviews = np.empty((M, N, 2, T), dtype=object)
+    overviews_struct = np.empty(T, dtype=object)
     intensities_keep = np.zeros((M, N, 2, T))
     num_events_keep = np.zeros(T)
     lambda_keep = np.zeros(T)
     num_events_all_contracts = np.zeros((M, N, 2, T))
-    
     buys_probs = np.full((M, N, 2, T), np.nan)
     limit_probs = np.full((M, N, 2, T), np.nan)
+    traded_volumes = np.zeros((M, N, 2, T))
 
-    volumes = np.full((M, N, 2, T), np.nan)
+    assetdata[0, 0] = params.init_open_price
+    assetdata[1, 0] = params.init_vola
 
     # initialize order books first (before running loop)
     for m, n, k in itertools.product(range(M), range(N), range(2)):
         time_till_expiry = params.expiry_dts[m] / (3600 * 24 * 365)
-        fair_price = black_scholes_call(
+        fair_price, *_ = black_scholes_call(
             params.init_open_price,
             params.strike_prices[n],
             time_till_expiry,
@@ -299,8 +357,6 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
             imbalance = (bid_vol_sum - ask_vol_sum) / (bid_vol_sum + ask_vol_sum + 1e-5)
 
-            volumes[chosen_exp, chosen_strike, chosen_type, T_current] = vol
-
             spread = abs(ob_bids[0]["price"] - ob_asks[0]["price"]) if (
                 ob_asks != [] and ob_bids != []
                 and
@@ -322,12 +378,12 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
             years_till_expiry = abs(params.expiry_dts[chosen_exp] - params.dt * T_current) / (3600 * 24 * 365)
             # determine price
             if chosen_type == 0:  # call
-                theo = black_scholes_call(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
+                theo, delta, gamma, vega, theta, rho = black_scholes_call(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
                                         sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
                 )
             else:  # put
-                theo = black_scholes_put(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
+                theo, delta, gamma, vega, theta, rho = black_scholes_put(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
                                         sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
                 )
@@ -380,6 +436,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                     "expiry": params.expiry_dts[chosen_exp],
                     "call/put": "call" if chosen_type == 0 else "put"
                 })
+                traded_volumes[chosen_exp, chosen_strike, chosen_type, T_current] += t["volume"]
 
             trades[chosen_exp, chosen_strike, chosen_type, T_current] = []
             # add new trades
@@ -398,14 +455,17 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                 (new_bids is not None and new_bids != [])
                 and
                 (new_asks is not None and new_asks != [])
-            ) else 0.0  
+            ) else 0.0
+
+            #prev_volume = overviews[chosen_exp, chosen_strike, chosen_type, T_current - 1]["volume"]
+            new_added_vol = sum([t["volume"] for t in new_trades])
 
             overviews[chosen_exp, chosen_strike, chosen_type, T_current] = {
                 "best_bid": new_best_bid if new_best_bid is not None else None,
                 "best_ask": new_best_ask if new_best_ask is not None else None,
                 "spread": spread,
                 "ltp": new_ltp,
-                "volume": 0.0, # to change
+                "volume": new_added_vol,
                 "moneyness": np.log(params.strike_prices[chosen_strike] / assetdata[0, T_current]),
                 "iv": implied_vol_call(
                     C_mkt=(new_asks[0]["price"] + new_bids[0]["price"]) / 2,
@@ -418,38 +478,85 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                     (new_bids is not None and new_bids != [])
                     and
                     (new_asks is not None and new_asks != [])
-                ) else None
+                ) else None,
+                "delta": delta,
+                "gamma": gamma,
+                "vega": vega,
+                "theta": theta,
+                "rho": rho
             }
+
+        # fill overviews_struct
+        rows = []
+        m, n, k = 0, 0, 0
+        for idx in range(2 * M * N):
+            if idx % N == 0 and idx != 0:
+                m += 1
+                n = 0
+            if idx == N * M:
+                k = 1
+                n = 0
+                m = 0
+
+            this = overviews[m, n, k, T_current]
+            if this is None:
+                continue
+            rows.append({
+                "expiry": params.expiry_dts[m],
+                "strike": params.strike_prices[n],
+                "type": "call" if k == 0 else "put",
+                "best_bid": this["best_bid"],
+                "best_ask": this["best_ask"],
+                "spread": this["spread"],
+                "ltp": this["ltp"],
+                "volume": this["volume"],
+                "moneyness": this["moneyness"],
+                "iv": this["iv"],
+                "delta": this["delta"],
+                "gamma": this["gamma"],
+                "vega": this["vega"],
+                "theta": this["theta"],
+                "rho": this["rho"]
+            })
+
+            n += 1
+
+        overviews_struct[T_current] = rows
+
+    # end of loop
+    
 
     if save:
         assert savedir is not None, AssertionError()
         np.save(savedir / "orderbooks.npy", orderbooks)
         np.save(savedir / "assetdata.npy", assetdata)
         np.save(savedir / "overviews.npy", overviews)
+        np.save(savedir / "overviews_struct.npy", overviews_struct)
         np.save(savedir / "trades.npy", trades)
         np.save(savedir / "all_trades.npy", all_trades)
         np.save(savedir / "intensities_keep.npy", intensities_keep)
         np.save(savedir / "num_events.npy", num_events_keep)
         np.save(savedir / "lambda_keep.npy", lambda_keep)
-        np.save(savedir / "volumes.npy", volumes)
         np.save(savedir / "limit_probs.npy", limit_probs)
         np.save(savedir / "buys_probs.npy", buys_probs)
         np.save(savedir / "num_events_contracts.npy", num_events_all_contracts)
         np.save(savedir / "kernels.npy", kernels)
+        np.save(savedir / "traded_volumes.npy", traded_volumes)
 
     else:
         return (
             orderbooks,
             assetdata,
             overviews,
+            overviews_struct,
             trades,
             all_trades,
             intensities_keep,
             lambda_keep,
             num_events_keep,
-            volumes,
             limit_probs,
             buys_probs,
             num_events_all_contracts,
-            kernels
+            kernels,
+            traded_volumes
         )

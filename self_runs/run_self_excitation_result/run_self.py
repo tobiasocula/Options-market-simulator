@@ -1,4 +1,4 @@
-from params_for_self_excitation import params
+from self_runs.run_self_excitation_result.params_for_self_excitation import params
 from self_excitation import self_excitation
 from pathlib import Path
 

@@ -4,8 +4,13 @@ from scipy.stats import norm
 import sys
 from scipy.optimize import brentq
 import numpy as np
+from debug import Debugger
 
-def cross_excitation(params: CrossExcitation, save=False, savedir=None):
+def cross_excitation(params: CrossExcitation, save=False, savedir=None,
+                     debugger=None):
+    
+    if debugger is None:
+        debugger = Debugger(None)
 
     # first part is exact same as self excitation
 
@@ -164,6 +169,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
     -all_trades: keep track of every trade that happened over all contracts, for each
     timestamp. also cumulative. entries are dicts with fields the same for trades, but
     with extra fields including expiry, strike and type index.
+    fields in order: price, time, volume, strike, expiry, type
 
     -kernels: for each contract (n, m, k) and timestamp, record the intensity of the kernel
     calculation. useful for tracking cross correlations between contracts and activity.
@@ -190,7 +196,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
     orderbooks = np.empty((M, N, 2, 2, T), dtype=object) # list of dicts
     assetdata = np.empty((2, T))
     trades = np.empty((M, N, 2, T), dtype=object) # list of dicts
-    all_trades = np.empty(T, dtype=object) # list of dicts, with fields
+    all_trades = []
     kernels = np.zeros((M, N, 2, T))
     overviews = np.empty((M, N, 2, T), dtype=object)
     overviews_struct = np.empty(T, dtype=object)
@@ -204,6 +210,8 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
     assetdata[0, 0] = params.init_open_price
     assetdata[1, 0] = params.init_vola
+
+    C = N * M * 2 # normalization constant
 
     # initialize order books first (before running loop)
     for m, n, k in itertools.product(range(M), range(N), range(2)):
@@ -262,7 +270,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
     # begin main loop
     for T_current in range(1, T):
-        print('T current:', T_current)
+        debugger.debug(f"T current: {T_current}", mode=1)
 
         # step 1: update price
         z1 = np.random.normal()
@@ -273,7 +281,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
         # update volatility
         assetdata[1, T_current] = assetdata[1, T_current - 1] + params.kappa * (params.theta - assetdata[1, T_current - 1]) * dt_years + params.xi * np.sqrt(assetdata[1, T_current - 1]) * dw_v
         # update price
-        assetdata[0, T_current] = assetdata[0, T_current - 1] * np.exp((params.mu - 0.5 * assetdata[1, T_current - 1] **2) * dt_years + np.sqrt(assetdata[0, T_current - 1]) * dw_s)
+        assetdata[0, T_current] = assetdata[0, T_current - 1] * np.exp((params.mu - 0.5 * assetdata[1, T_current - 1] **2) * dt_years + np.sqrt(assetdata[1, T_current - 1]) * dw_s)
 
         # step 2: generate potential new orders
         # do this for all contracts
@@ -282,15 +290,17 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
         for this_exp, this_strike, this_type in itertools.product(range(M), range(N), range(2)):
 
-            time_till_expiry = (params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
+            debugger.debug(f"Contract {this_exp}/{M-1}, {this_strike}/{N-1}, {this_type}/1", mode=3)
+
+            time_till_expiry = abs(params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
             adding_term = params.mu * np.exp(
                 -params.alpha_moneyness * moneyness * moneyness
                 -params.alpha_time * time_till_expiry
             )
-            #print('adding term:', adding_term)
+            debugger.debug(f"adding term: {adding_term} with values {-params.alpha_moneyness * moneyness * moneyness} and {-params.alpha_time * time_till_expiry}", mode=3)
+
             excitations[this_exp, this_strike, this_type] += adding_term
-            #print('adding term (from static excitation):', adding_term)
 
             for other_exp, other_strike, other_type in itertools.product(range(M), range(N), range(2)):
                 trade = trades[other_exp, other_strike, other_type, T_current - 1]
@@ -301,30 +311,35 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
                     m_i = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
                     m_j = np.log(params.strike_prices[other_strike] / assetdata[0, T_current])
                     delta_m = params.gamma_m * np.abs(m_i - m_j)
-                    first_part = (1 if (
+                    first_part = (params.rho_self if (
                         this_exp == other_exp and this_strike == other_strike and this_type == other_type
                         ) else 0) + params.tau[this_type][other_type]
                     volume_part = params.w_volume * entry["volume"]
-                    kernel = first_part * volume_part * np.exp(- delta_m - delta_t)
-                    # print('volume part:', volume_part)
-                    # print('time decay:', time_decay)
-                    # print('delta m:', delta_m)
-                    # print('delta t:', delta_t)
-                    # print('kernel:', kernel)
-                    # print()
-                    #print('kernel:', kernel)
+                    kernel = first_part * volume_part * np.exp(- delta_m - delta_t) / C
+
+                    debugger.debug(f'volume part: {volume_part}', mode=2)
+                    debugger.debug(f'delta_m: {delta_m}', mode=2)
+                    debugger.debug(f'delta_t: {delta_t}', mode=2)
+                    debugger.debug(f'kernel: {kernel}', mode=2)
+
                     kernels[this_exp, this_strike, this_type, T_current] = kernel
                     excitations[this_exp, this_strike, this_type] += kernel
 
+                    debugger.debug(f"kernel: {kernel}", mode=3)
+
+        print(excitations[:, :, 0])
+        print()
+        print(excitations[:, :, 1])
         Lambda = np.sum(excitations)
-        print('Lambda:', Lambda)
+        debugger.debug(f"Lambda: {Lambda}", mode=1)
 
         lambda_keep[T_current] = Lambda
 
         num_events = np.random.poisson(Lambda * params.dt)
         num_events_keep[T_current] = num_events
 
-        print('num events:', num_events)
+        debugger.debug(f"num_events: {num_events}", mode=1)
+        debugger.debug(f"num_events: {num_events}", mode=3)
 
         intensities_keep[:, :, :, T_current] = excitations[:, :, :]
         for _ in range(num_events):
@@ -420,15 +435,10 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
             orderbooks[(chosen_exp, chosen_strike, chosen_type, 1, T_current)] = new_asks
 
             # update all trades structure
-            if all_trades[T_current - 1] is None:
-                all_trades[T_current] = []
-            else:
-                all_trades[T_current] = all_trades[T_current - 1]
-
             for t in new_trades:
                 # t is dict with (price, time, volume)
                 # but we also need (expiry, strike, call/put)
-                all_trades[T_current].append({
+                all_trades.append({
                     "price": t["price"],
                     "time": t["time"],
                     "volume": t["volume"],
@@ -523,8 +533,9 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None):
 
         overviews_struct[T_current] = rows
 
+    all_trades = np.array(all_trades, dtype=object)
+
     # end of loop
-    
 
     if save:
         assert savedir is not None, AssertionError()

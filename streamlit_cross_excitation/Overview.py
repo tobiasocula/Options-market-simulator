@@ -3,14 +3,21 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import plotly.graph_objects as go
-from params_for_cross_excitation import params
+
+
+# change with different params
+from cross_runs_scripts.params_long_2 import params
+
+# streamlit run streamlit_cross_excitation/Overview.py
 
 st.set_page_config(
     page_title="Options Market Simulation Dashboard",
     layout="wide"
 )
 
-save = Path.cwd() / "run_cross_excitation_result"
+# "run_cross_excitation_result"
+
+save = Path.cwd() / "cross_runs_results" / "long_2"
 
 params_dict = params.model_dump()
 param_df = pd.DataFrame({
@@ -24,16 +31,9 @@ st.dataframe(param_df)
 # Store data in session state
 st.session_state.assetdata = np.load(save / "assetdata.npy", allow_pickle=True)
 st.session_state.lambdas = np.load(save / "lambda_keep.npy", allow_pickle=True)
-st.session_state.overviews = np.load(save / "overviews_struct.npy", allow_pickle=True)
 st.session_state.time_values = np.linspace(0, params.dt * params.T, int(params.T))
 
-all_trades = np.load(save / "all_trades.npy", allow_pickle=True) # list of lists of dicts
-st.session_state.all_trades = []
-for timestamp_trades in all_trades:
-    if timestamp_trades is None:
-        continue
-    for indiv_trade in timestamp_trades:
-        st.session_state.all_trades.append(indiv_trade)
+st.session_state.all_trades = np.load(save / "all_trades.npy", allow_pickle=True) # list of lists of dicts
 
 st.session_state.intensities = np.load(save / "intensities_keep.npy", allow_pickle=True)
 st.session_state.expiry_dates = params.expiry_dts
@@ -46,7 +46,9 @@ st.session_state.num_events_contracts = np.load(save / "num_events_contracts.npy
 st.session_state.kernels = np.load(save / "kernels.npy", allow_pickle=True)
 st.session_state.overviews = np.load(save / "overviews_struct.npy", allow_pickle=True)
 
-#print('all trades:'); print(st.session_state.all_trades)
+print('num events (per timestamps, all contracts:)'); print(st.session_state.num_events)
+for k in range(100):
+    print('individual printouts:'); print(st.session_state.num_events[k])
 
 price_fig = go.Figure()
 vola_fig = go.Figure()

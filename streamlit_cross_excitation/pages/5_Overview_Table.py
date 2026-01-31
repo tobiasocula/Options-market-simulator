@@ -4,7 +4,9 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 import itertools
-from params_for_self_excitation import params
+
+# change with different params
+from cross_runs_scripts.params_long_1 import params
 
 st.subheader("Overview")
 
@@ -19,9 +21,7 @@ parameter_value = st.slider(
 )
 
 selected = st.session_state.overviews[int(parameter_value)]
-print('SELECTED:'); print(selected)
 df = pd.DataFrame(selected)
-print(df)
 
 st.write("Overview of orderbook")
 

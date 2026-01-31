@@ -1,6 +1,6 @@
 import streamlit as st
 import plotly.express as px
-from params_for_self_excitation import params
+from self_runs.run_self_excitation_result.params_for_self_excitation import params
 import numpy as np
 import plotly.graph_objects as go
 import pandas as pd

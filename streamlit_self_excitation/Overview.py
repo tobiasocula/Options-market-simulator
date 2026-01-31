@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import plotly.graph_objects as go
-from params_for_self_excitation import params
+from self_runs.run_self_excitation_result.params_for_self_excitation import params
 
 st.set_page_config(
     page_title="Options Market Simulation Dashboard",

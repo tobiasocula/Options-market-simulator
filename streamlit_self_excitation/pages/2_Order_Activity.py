@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 import itertools
-from params_for_self_excitation import params
+from self_runs.run_self_excitation_result.params_for_self_excitation import params
 
 st.subheader("Order activity & Trades")
 

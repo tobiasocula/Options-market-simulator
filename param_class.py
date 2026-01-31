@@ -4,15 +4,19 @@ from pydantic import BaseModel
 class SelfExcitation(BaseModel):
 
     # generic
-    dt: float # time increment (amount of time to pass per timestamp in simulation)
-    T: int # amount of timesteps
+    dt: float # time increment (amount of time to pass per timestamp in simulation), in seconds
+    T: int # amount of timesteps (no unit)
 
     # options trading
     mu_intensity: float # the static intensity per contract (also constant for all contracts here)
+    # unit: events / second per contract
+
     beta: float # decay parameter, for this model, this is constant for all contracts k,j
+    # unit: 1/second (decay rate per second)
+
     w_volume: float # determines strength of order volume
-    alpha_moneyness: float
-    alpha_time: float
+    alpha_moneyness: float # unit: none
+    alpha_time: float # unit: 1/year
 
     # volume
     contract_volume_mean: float | int # mean for lognormal sampling of option contract size
@@ -58,15 +62,15 @@ class CrossExcitation(BaseModel):
     gamma_m: float # determines strength between contract's moneynesses
     gamma_t: float # determines strength between contract's expiry dates
     tau: list[list[float]] # cross-type intensity parameter
-    rho: float # accounts for self-excitation
-    mu_intensity: float # the static intensity per contract (also constant for all contracts here)
-    beta: float # decay parameter, for this model, this is constant for all contracts k,j
-    w_volume: float # determines strength of order volume
-    alpha_moneyness: float
-    alpha_time: float
+    rho_self: float # accounts for self-excitation
+    mu_intensity: float # the static intensity per contract (also constant for all contracts here). unit: events/second
+    beta: float # decay parameter, for this model, this is constant for all contracts k,j, unit: 1/second
+    w_volume: float # determines strength of order volume, unit: 1/volume
+    alpha_moneyness: float # unit: none
+    alpha_time: float # unit: 1/second
 
     # generic
-    dt: float # time increment (amount of time to pass per timestamp in simulation)
+    dt: float # time increment (amount of time to pass per timestamp in simulation), seconds
     T: int # amount of timesteps
 
     # volume
@@ -93,11 +97,11 @@ class CrossExcitation(BaseModel):
     # asset parameters
     init_open_price: float
     init_vola: float
-    kappa: float # volatility mean reverting rate
-    theta: float # volatility mean
-    xi: float # volatility of volatility
-    mu: float # asset yearly expected return
-    rho: float # correlation volatility and asset price
+    kappa: float # volatility mean reverting rate, unit: 1/year
+    theta: float # volatility mean, unit: variance
+    xi: float # volatility of volatility, unit: 1/sqrt(year)
+    mu: float # asset yearly expected return, unit: 1/year
+    rho: float # correlation volatility and asset price, unit: none
 
     limit_order_base_param: float
     limit_order_vol_param: float

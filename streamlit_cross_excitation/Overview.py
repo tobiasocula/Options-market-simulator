@@ -47,8 +47,6 @@ st.session_state.kernels = np.load(save / "kernels.npy", allow_pickle=True)
 st.session_state.overviews = np.load(save / "overviews_struct.npy", allow_pickle=True)
 
 print('num events (per timestamps, all contracts:)'); print(st.session_state.num_events)
-for k in range(100):
-    print('individual printouts:'); print(st.session_state.num_events[k])
 
 price_fig = go.Figure()
 vola_fig = go.Figure()

@@ -64,6 +64,7 @@ class CrossExcitation(BaseModel):
     tau: list[list[float]] # cross-type intensity parameter
     rho_self: float # accounts for self-excitation
     mu_intensity: float # the static intensity per contract (also constant for all contracts here). unit: events/second
+    mu_variation: float # intensity of mu_baseline variation: higher means more randomness in mu_intensity
     beta: float # decay parameter, for this model, this is constant for all contracts k,j, unit: 1/second
     w_volume: float # determines strength of order volume, unit: 1/volume
     alpha_moneyness: float # unit: none

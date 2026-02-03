@@ -16,11 +16,13 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
     def implied_vol_call(C_mkt, S, K, T, r, q, min_price=0.01):
 
+        debugger.debug(f"IV with Cmkt: {C_mkt}, S: {S}, K: {K}, T: {T}", mode=4)
+
         C_mkt = max(C_mkt, min_price)
 
         try:
             return brentq(
-                lambda sigma: black_scholes_call(S, K, T, r, q, sigma)[0] - C_mkt,
+                lambda sigma: black_scholes_call(S, K, T, r, q, sigma) - C_mkt,
                 0.0, 10.0
             )
         except:
@@ -33,41 +35,55 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
         indices = np.unravel_index(flat_idx, shape)
         return np.array(indices)
     
-    def black_scholes_call(S, K, T, r, q, sigma):
+    def black_scholes_call(S, K, T, r, q, sigma, greeks=False):
         if S <= 0 or K <= 0 or T <= 0 or sigma <= 0:
             raise ValueError(f"Invalid BS inputs: S={S}, K={K}, T={T}, sigma={sigma}")
 
+        if greeks:
+
+            d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+            d2 = d1 - sigma * np.sqrt(T)
+
+            # Option price
+            call_price = S * np.exp(-q * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+
+            # Greeks
+            delta = np.exp(-q * T) * norm.cdf(d1)
+            gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
+            vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) * 0.01  # Scaled for 1% change in volatility
+            theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
+                    r * K * np.exp(-r * T) * norm.cdf(d2) +
+                    q * S * np.exp(-q * T) * norm.cdf(d1)) / 365  # Per day
+            rho = K * T * np.exp(-r * T) * norm.cdf(d2) * 0.01  # Scaled for 1% change in interest rate
+
+            return np.round(call_price, 2), np.round(delta, 2), np.round(gamma, 2), np.round(vega, 2), np.round(theta, 2), np.round(rho, 2)
+        
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
 
         # Option price
         call_price = S * np.exp(-q * T) * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        return np.round(call_price, 2)
 
-        # Greeks
-        delta = np.exp(-q * T) * norm.cdf(d1)
-        gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
-        vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) * 0.01  # Scaled for 1% change in volatility
-        theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
-                r * K * np.exp(-r * T) * norm.cdf(d2) +
-                q * S * np.exp(-q * T) * norm.cdf(d1)) / 365  # Per day
-        rho = K * T * np.exp(-r * T) * norm.cdf(d2) * 0.01  # Scaled for 1% change in interest rate
+    def black_scholes_put(S, K, T, r, q, sigma, greeks=False):
+        if greeks:
+            (
+                call_price, delta_call, gamma_call, vega_call, theta_call, rho_call
+            ) = black_scholes_call(S, K, T, r, q, sigma, greeks=True)
 
-        return call_price, delta, gamma, vega, theta, rho
+            put_price = call_price - S * np.exp(-q * T) + K * np.exp(-r * T)
 
-    def black_scholes_put(S, K, T, r, q, sigma):
-        (
-            call_price, delta_call, gamma_call, vega_call, theta_call, rho_call
-        ) = black_scholes_call(S, K, T, r, q, sigma)
+            delta_put = delta_call - np.exp(-q * T)
+            gamma_put = gamma_call
+            vega_put = vega_call
+            theta_put = theta_call + r * K * np.exp(-r * T) - q * S * np.exp(-q * T)
+            rho_put = rho_call - K * T * np.exp(-r * T)
 
+            return np.round(put_price, 2), np.round(delta_put, 2), np.round(gamma_put, 2), np.round(vega_put, 2), np.round(theta_put, 2), np.round(rho_put, 2)
+
+        call_price = black_scholes_call(S, K, T, r, q, sigma)
         put_price = call_price - S * np.exp(-q * T) + K * np.exp(-r * T)
-
-        delta_put = delta_call - np.exp(-q * T)
-        gamma_put = gamma_call
-        vega_put = vega_call
-        theta_put = theta_call + r * K * np.exp(-r * T) - q * S * np.exp(-q * T)
-        rho_put = rho_call - K * T * np.exp(-r * T)
-
-        return put_price, delta_put, gamma_put, vega_put, theta_put, rho_put
+        return np.round(put_price, 2)
         
     def rev(a):        
         n = len(a)
@@ -214,26 +230,42 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
     C = N * M * 2 # normalization constant
 
     # initialize order books first (before running loop)
+    debugger.debug(f"starting init of orderbook for {C} contracts", mode=1)
+
     for m, n, k in itertools.product(range(M), range(N), range(2)):
-        time_till_expiry = params.expiry_dts[m] / (3600 * 24 * 365)
-        fair_price, *_ = black_scholes_call(
-            params.init_open_price,
-            params.strike_prices[n],
-            time_till_expiry,
-            params.risk_free,
-            params.dividend_rate,
-            params.init_vola
-        )
+        debugger.debug(f"in init orderbook: {m}, {n} and {k}", mode=1)
+
+        time_exp_start_years = params.expiry_dts[m] / (3600 * 24 * 365)
+
+        if k == 0: # call
+            fair_price = black_scholes_call(
+                params.init_open_price,
+                params.strike_prices[n],
+                time_exp_start_years,
+                params.risk_free,
+                params.dividend_rate,
+                params.init_vola
+            )
+        else:
+            fair_price = black_scholes_put(
+                params.init_open_price,
+                params.strike_prices[n],
+                time_exp_start_years,
+                params.risk_free,
+                params.dividend_rate,
+                params.init_vola
+            )
         moneyness = np.log(params.strike_prices[n] / params.init_open_price)
         
         # Liquidity scaling: fewer orders for OTM/long-dated
-        rel_liq = np.exp(-params.gamma_init * moneyness - params.beta_init * time_till_expiry)
+        rel_liq = np.exp(-params.gamma_init * moneyness - params.beta_init * params.expiry_dts[m])
         n_orders_side = max(1, int(params.base_n_orders_init * rel_liq))  # ≥1 order/side
     
         # Price scale: wider spreads for OTM/long-dated
-        scale_price = params.base_scale_init_orders * (
-            1 + params.moneyness_scale_init_orders * moneyness + 
-            params.time_scale_init_orders * time_till_expiry
+        scale_price = params.base_scale_init_orders * max(
+            0.1,
+            1 + params.moneyness_scale_init_orders * np.clip(moneyness, -2, 2) + 
+            params.time_scale_init_orders * params.expiry_dts[m]
         )
 
         # fill bid side first
@@ -264,13 +296,16 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                 order
             )
 
-    dt_years = params.dt / (365 * 24 * 3600)
-
     excitations = np.zeros((M, N, 2))
 
     # begin main loop
     for T_current in range(1, T):
         debugger.debug(f"T current: {T_current}", mode=1)
+
+        time_till_expiry_seconds = max(0.0, params.expiry_dts[m] - T_current * params.dt)  # in seconds
+        time_till_expiry_years = time_till_expiry_seconds / (3600 * 24 * 365.25)  # convert to years
+
+        dt_years = params.dt / (3600 * 24 * 365) # for heston
 
         # step 1: update price
         z1 = np.random.normal()
@@ -292,22 +327,25 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             debugger.debug(f"Contract {this_exp}/{M-1}, {this_strike}/{N-1}, {this_type}/1", mode=3)
 
-            time_till_expiry = abs(params.T * params.dt - params.expiry_dts[this_exp]) / (3600 * 24 * 365) # years
+            time_till_expiry_curr = max(0.0, params.expiry_dts[this_exp] - T_current * params.dt)
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
-            adding_term = params.mu * np.exp(
+            mu_intensity = params.mu_intensity * max(0.0, 1 + params.mu_variation * np.random.normal())
+            adding_term = mu_intensity * np.exp(
                 -params.alpha_moneyness * moneyness * moneyness
-                -params.alpha_time * time_till_expiry
+                -params.alpha_time * time_till_expiry_curr
             )
-            debugger.debug(f"adding term: {adding_term} with values {-params.alpha_moneyness * moneyness * moneyness} and {-params.alpha_time * time_till_expiry}", mode=3)
+            debugger.debug(f"adding term: {adding_term} with moneyness term {-params.alpha_moneyness * moneyness * moneyness} and time term {-params.alpha_time * time_till_expiry_curr}", mode=3)
 
             excitations[this_exp, this_strike, this_type] += adding_term
+
+            total_kernel = 0.0
 
             for other_exp, other_strike, other_type in itertools.product(range(M), range(N), range(2)):
                 trade = trades[other_exp, other_strike, other_type, T_current - 1]
                 if trade is None:
                     continue
                 for entry in trade:
-                    delta_t = params.gamma_t * np.abs(params.expiry_dts[this_exp] - params.expiry_dts[other_exp]) / (365 * 24 * 3600)
+                    delta_t = params.gamma_t * np.abs(params.expiry_dts[this_exp] - params.expiry_dts[other_exp])
                     m_i = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
                     m_j = np.log(params.strike_prices[other_strike] / assetdata[0, T_current])
                     delta_m = params.gamma_m * np.abs(m_i - m_j)
@@ -316,22 +354,19 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                         ) else 0) + params.tau[this_type][other_type]
                     volume_part = params.w_volume * entry["volume"]
                     kernel = first_part * volume_part * np.exp(- delta_m - delta_t) / C
+                    total_kernel += kernel
 
-                    debugger.debug(f'volume part: {volume_part}', mode=2)
-                    debugger.debug(f'delta_m: {delta_m}', mode=2)
-                    debugger.debug(f'delta_t: {delta_t}', mode=2)
-                    debugger.debug(f'kernel: {kernel}', mode=2)
-
-                    kernels[this_exp, this_strike, this_type, T_current] = kernel
                     excitations[this_exp, this_strike, this_type] += kernel
 
-                    debugger.debug(f"kernel: {kernel}", mode=3)
+                    debugger.debug(f"delta M: {delta_m}, delta_t: {delta_t}, volume part: {volume_part}, kernel: {kernel}", mode=3)
 
-        print(excitations[:, :, 0])
-        print()
-        print(excitations[:, :, 1])
+            kernels[this_exp, this_strike, this_type, T_current] = total_kernel
+
+            debugger.debug(f"total kernel for this contract: {total_kernel}", mode=3)
+
         Lambda = np.sum(excitations)
         debugger.debug(f"Lambda: {Lambda}", mode=1)
+        debugger.debug(f"Lambda: {Lambda}", mode=3)
 
         lambda_keep[T_current] = Lambda
 
@@ -352,17 +387,21 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             # generate order for this contract
 
-            vol = int(np.random.lognormal(
+            debugger.debug(f'vol log term: {np.log(assetdata[0, T_current] / params.strike_prices[chosen_strike])}', mode=2)
+            vol_rand_term = np.random.lognormal(
                 params.contract_volume_mean,
                 params.contract_volume_std
-            ) * params.volume_base * np.exp(
-                -params.volume_moneyness * np.abs(np.log(
-                    assetdata[0, T_current] / params.strike_prices[chosen_strike]
-                )) - params.volume_time_decay * (
-                    (params.expiry_dts[chosen_exp] - params.dt * T_current) / (3600 * 24 * 365)
-            )))
+            )
+            vol_moneyness_term = -params.volume_moneyness * np.abs(np.log(assetdata[0, T_current] / params.strike_prices[chosen_strike]))
+            vol_time_term = min(0.0, -params.volume_time_decay * (params.expiry_dts[chosen_exp] - params.dt * T_current))
+            debugger.debug(f'vol rand: {vol_rand_term}', mode=2)
+            debugger.debug(f'vol moneyness: {vol_moneyness_term}', mode=2)
+            debugger.debug(f'vol time: {vol_time_term}', mode=2)
 
+            vol = int(vol_rand_term * params.volume_base * np.exp(vol_moneyness_term + vol_time_term))
             vol = max(1, vol) # round to nearest non-zero integer
+
+            debugger.debug(f"vol: {vol}", mode=2)
 
             ob_bids = orderbooks[(chosen_exp, chosen_strike, chosen_type, 0, T_current - 1)]
             ob_asks = orderbooks[(chosen_exp, chosen_strike, chosen_type, 1, T_current - 1)]
@@ -395,12 +434,14 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
             if chosen_type == 0:  # call
                 theo, delta, gamma, vega, theta, rho = black_scholes_call(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
-                                        sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
+                                        sigma=max(assetdata[1, T_current], 0.01), # cap to some lower bound
+                                        greeks=True
                 )
             else:  # put
                 theo, delta, gamma, vega, theta, rho = black_scholes_put(assetdata[0, T_current], params.strike_prices[chosen_strike], years_till_expiry,
                                         params.risk_free, params.dividend_rate,
-                                        sigma=max(assetdata[1, T_current], 0.01) # cap to some lower bound
+                                        sigma=max(assetdata[1, T_current], 0.01), # cap to some lower bound
+                                        greeks=True
                 )
                 
             intrinsic = max(

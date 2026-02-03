@@ -6,7 +6,7 @@ import itertools
 import pandas as pd
 
 # change with different params
-from cross_runs_scripts.params_long_1 import params
+from cross_runs_scripts.params_long_2 import params
 
 M = len(params.expiry_dts)
 N = len(params.strike_prices)

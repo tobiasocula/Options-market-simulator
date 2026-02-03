@@ -6,7 +6,7 @@ import pandas as pd
 import itertools
 
 # change with different params
-from cross_runs_scripts.params_long_1 import params
+from cross_runs_scripts.params_long_2 import params
 
 st.subheader("Trade Volumes")
 

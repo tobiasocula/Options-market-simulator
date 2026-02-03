@@ -2,34 +2,35 @@
 from param_class import CrossExcitation
 params = CrossExcitation(
     # TIME SCALE
-    dt=300.0,          # 5 minutes
-    T=2340,            # ~30 trading days
+    dt=100_000,
+    T=23,
 
     # STATIC BASE INTENSITY (per contract)
-    alpha_moneyness = 80.0,    # was 150
-    alpha_time      =  30.0,   # was 100
-    mu_intensity    = 0.015,   # was 0.005
+    alpha_moneyness = 0.1,
+    alpha_time      =  0.0000003,
+    mu_intensity    = 5e-6,
+    mu_variation = 0.3,
 
     # HAWKES DYNAMICS
-    beta     = 0.05,           # slower decay over ~1–2 days
+    beta     = 0.00005,           # slower decay over ~1–2 days
     rho_self = 0.7,            # self-excitation < 1
     tau      = [[0.15, 0.10],  # weaker cross-excitation
                 [0.15, 0.10]],
-    gamma_m  = 4.0,            # smoother in strikes
-    gamma_t  = 5.0,            # smoother in expiries
+    gamma_m  = 5.0,            # smoother in strikes
+    gamma_t  = 0.0002,            # smoother in expiries
 
-    w_volume = 0.15,           # lower volume impact
+    w_volume = 0.1,           # lower volume impact
 
     # VOLUME MODEL (unchanged for now, tune after eyeballing data)
-    contract_volume_mean = 0.6,
-    contract_volume_std  = 0.7,
+    contract_volume_mean = 2.0,
+    contract_volume_std  = 1.2,
     volume_base          = 2.5,
-    volume_moneyness     = 4.0,
-    volume_time_decay    = 2.5,
+    volume_moneyness     = 10.0,
+    volume_time_decay    = 0.002,
 
     # OPTION GRID
     strike_prices = [3800, 3900, 4000, 4100, 4200, 4300, 4400],
-    expiry_dts    = [86400*14, 86400*45, 86400*90, 86400*180],
+    expiry_dts    = [86400 * k for k in [5, 15, 30, 45]],
 
     # FINANCE MODEL (leave as is)
     risk_free     = 0.04,
@@ -43,7 +44,7 @@ params = CrossExcitation(
     beta_init                = 0.1,
     gamma_init               = 0.5,
 
-    init_open_price = 4200.0,
+    init_open_price = 120.0,
     init_vola       = 0.04,
 
     # HESTON

@@ -7,7 +7,7 @@ import numpy as np
 from debug import Debugger
 
 def cross_excitation(params: CrossExcitation, save=False, savedir=None,
-                     debugger=None):
+                     debugger=None, max_events=10_000, event_limit=None):
     
     if debugger is None:
         debugger = Debugger(None)
@@ -302,9 +302,6 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
     for T_current in range(1, T):
         debugger.debug(f"T current: {T_current}", mode=1)
 
-        time_till_expiry_seconds = max(0.0, params.expiry_dts[m] - T_current * params.dt)  # in seconds
-        time_till_expiry_years = time_till_expiry_seconds / (3600 * 24 * 365.25)  # convert to years
-
         dt_years = params.dt / (3600 * 24 * 365) # for heston
 
         # step 1: update price
@@ -327,7 +324,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             debugger.debug(f"Contract {this_exp}/{M-1}, {this_strike}/{N-1}, {this_type}/1", mode=3)
 
-            time_till_expiry_curr = max(0.0, params.expiry_dts[this_exp] - T_current * params.dt)
+            time_till_expiry_curr = max(0.0, params.expiry_dts[this_exp] - T_current * params.dt) # seconds
             moneyness = np.log(params.strike_prices[this_strike] / assetdata[0, T_current])
             mu_intensity = params.mu_intensity * max(0.0, 1 + params.mu_variation * np.random.normal())
             adding_term = mu_intensity * np.exp(
@@ -335,10 +332,13 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                 -params.alpha_time * time_till_expiry_curr
             )
             debugger.debug(f"adding term: {adding_term} with moneyness term {-params.alpha_moneyness * moneyness * moneyness} and time term {-params.alpha_time * time_till_expiry_curr}", mode=3)
+            #debugger.debug(f"adding term: {adding_term} with moneyness term {-params.alpha_moneyness * moneyness * moneyness} and time term {-params.alpha_time * time_till_expiry_curr}", mode=1)
+
+            total_kernel = 0.0 # debugging
+            total_adding_term = 0.0 # debugging
 
             excitations[this_exp, this_strike, this_type] += adding_term
-
-            total_kernel = 0.0
+            total_adding_term += adding_term
 
             for other_exp, other_strike, other_type in itertools.product(range(M), range(N), range(2)):
                 trade = trades[other_exp, other_strike, other_type, T_current - 1]
@@ -359,25 +359,39 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                     excitations[this_exp, this_strike, this_type] += kernel
 
                     debugger.debug(f"delta M: {delta_m}, delta_t: {delta_t}, volume part: {volume_part}, kernel: {kernel}", mode=3)
+                    #debugger.debug(f"delta M: {delta_m}, delta_t: {delta_t}, volume part: {volume_part}, kernel: {kernel}", mode=1)
 
             kernels[this_exp, this_strike, this_type, T_current] = total_kernel
+            if total_adding_term + total_kernel > 0:
+                debugger.debug(f"contributions intensity: adding terms {total_adding_term / (total_adding_term + total_kernel)}, total kernel {total_kernel / (total_adding_term + total_kernel)}", mode=1)
 
-            debugger.debug(f"total kernel for this contract: {total_kernel}", mode=3)
+        #sys.exit()
 
         Lambda = np.sum(excitations)
         debugger.debug(f"Lambda: {Lambda}", mode=1)
-        debugger.debug(f"Lambda: {Lambda}", mode=3)
+        #debugger.debug(f"Lambda: {Lambda}", mode=3)
+
+        # debugger.debug("Kernels over expiries (calls, puts):", mode=1)
+        # debugger.debug(np.mean(kernels[:, :, 0, T_current], axis=1), mode=1)
+        # debugger.debug(np.mean(kernels[:, :, 1, T_current], axis=1), mode=1)
+        # debugger.debug("Kernels over strikes (calls, puts):", mode=1)
+        # debugger.debug(np.mean(kernels[:, :, 0, T_current], axis=0), mode=1)
+        # debugger.debug(np.mean(kernels[:, :, 1, T_current], axis=0), mode=1)
 
         lambda_keep[T_current] = Lambda
 
         num_events = np.random.poisson(Lambda * params.dt)
+        num_events = min(num_events, max_events)
+        if event_limit is not None and num_events >= event_limit:
+            return False # error
         num_events_keep[T_current] = num_events
 
         debugger.debug(f"num_events: {num_events}", mode=1)
         debugger.debug(f"num_events: {num_events}", mode=3)
 
         intensities_keep[:, :, :, T_current] = excitations[:, :, :]
-        for _ in range(num_events):
+        volumes_debug = np.empty(num_events) # for debugging
+        for num_event_idx in range(num_events):
 
             probs_per_contract = excitations / Lambda # same shape as intensities_prime
             chosen_idx = sample_multidim(probs_per_contract)
@@ -401,6 +415,8 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
             vol = int(vol_rand_term * params.volume_base * np.exp(vol_moneyness_term + vol_time_term))
             vol = max(1, vol) # round to nearest non-zero integer
 
+            volumes_debug[num_event_idx] = vol
+
             debugger.debug(f"vol: {vol}", mode=2)
 
             ob_bids = orderbooks[(chosen_exp, chosen_strike, chosen_type, 0, T_current - 1)]
@@ -419,6 +435,9 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             eta_buy = params.buy_order_base_param + params.buy_order_imbalance_param * imbalance
             eta_limit = params.limit_order_base_param + params.limit_order_vol_param * vol + params.limit_order_spread_param * spread
+
+            eta_limit = min(eta_limit, 50.0)
+            eta_buy = min(eta_buy, 50.0)
 
             prob_buy = 1 / (1 + np.exp(-eta_buy))
             prob_limit = 1 / (1 + np.exp(-eta_limit))
@@ -536,6 +555,9 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                 "theta": theta,
                 "rho": rho
             }
+
+        if num_events > 0:
+            debugger.debug(f"volume mean: {np.sum(volumes_debug) / num_events}, max: {np.max(volumes_debug)}, min: {np.min(volumes_debug)}, median: {np.median(volumes_debug)}", mode=1)
 
         # fill overviews_struct
         rows = []

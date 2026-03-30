@@ -6,12 +6,6 @@ import sys
 from nn_learning.loss_funcs import *
 tf.debugging.enable_check_numerics()
 
-"""
-  File "C:\Users\tobia\AppData\Roaming\Python\Python311\site-packages\keras\src\layers\input_spec.py", line 245, in assert_input_compatibility
-    raise ValueError(
-ValueError: Input 0 of layer "functional" is incompatible with the layer: expected shape=(None, 23, 64, 5), found shape=(1, 20, 64, 5)
-"""
-
 def iterprod(*args):
 
     n = len(args)
@@ -49,10 +43,10 @@ def pad_contracts(input_struct, C_max):
     return padded, mask
 
 def random_contract_subset(input_struct, max_contracts):
-    _, T, N, F = input_struct.shape # N = amount of contracts, 2*M*N
+    _, T, N, _ = input_struct.shape
     
     idx = np.random.choice(N, size=max_contracts, replace=False)
-    return input_struct[0, :, idx, :]
+    return input_struct[:, :, idx, :]
 
 def build_parameter_network(T, num_contracts):
     # Main input for volumes, deltas, gammas
@@ -274,38 +268,48 @@ def prepare_input_data(dir):
 
     volume = np.load(dir / "traded_volumes.npy", allow_pickle=True) # shape (M, N, 2, T)
     volume = volume[:, :, :, :23] # cut off
-    volume = np.reshape(volume, shape=(num_expiries * num_strikes * 2, T)).T # shape (T, M*N*2)
+    volume = np.reshape(volume, shape=(2, num_expiries * num_strikes, T)).T # shape (T, 2, M*N)
 
     overviews = np.load(dir / "overviews.npy", allow_pickle=True) # shape (M, N, 2, T)
     overviews = overviews[:, :, :, :23]
 
-    deltas = np.empty((num_expiries * num_strikes * 2, T)) # shape (M * N * 2, T)
-    gammas = np.empty((num_expiries * num_strikes * 2, T)) # shape (M * N * 2, T)
+    deltas = np.empty((2, num_expiries * num_strikes, T)) # shape (2, M * N, T)
+    gammas = np.empty((2, num_expiries * num_strikes, T)) # shape (2, M * N, T)
 
     deltas = deltas[:, :23]
     gammas = gammas[:, :23]
 
-    # convert (N/M, T) structure to (M * N * 2, T) structure (for expiries and strikes)
-    expiries = np.empty((num_expiries * num_strikes * 2, T))
-    strikes = np.empty((num_expiries * num_strikes * 2, T))
+    # convert (N/M, T) structure to (2, M * N, T) structure (for expiries and strikes)
+    expiries = np.empty((2, num_expiries * num_strikes, T))
+    strikes = np.empty((2, num_expiries * num_strikes, T))
 
     # first iterate k, then m, then n
-    for idx, (n, m, k) in iterprod(num_strikes, num_expiries, 2):
-    
-        overv = overviews[m - 1, n - 1, k - 1] # (T,)
+    # CALLS
+    for idx, (n, m) in iterprod(num_strikes, num_expiries):
+        overv = overviews[m - 1, n - 1, 0] # (T,)
 
-        deltas[idx - 1] = [overv[t]["delta"] if overv[t] is not None else 0.0 for t in range(T)]
-        gammas[idx - 1] = [overv[t]["gamma"] if overv[t] is not None else 0.0 for t in range(T)]
+        deltas[0, idx - 1] = [overv[t]["delta"] if overv[t] is not None else 0.0 for t in range(T)]
+        gammas[0, idx - 1] = [overv[t]["gamma"] if overv[t] is not None else 0.0 for t in range(T)]
 
-        expiries[idx - 1] = normalized_expiries[m - 1]
-        strikes[idx - 1] = moneynesses[n - 1]
+        expiries[0, idx - 1] = normalized_expiries[m - 1]
+        strikes[0, idx - 1] = moneynesses[n - 1]
 
-    input_struct = np.array([volume, deltas.T, gammas.T, expiries.T, strikes.T])
-    input_struct = np.moveaxis(input_struct, 1, 0)
-    input_struct = np.moveaxis(input_struct, 2, 1)
-    input_struct = np.expand_dims(input_struct, axis=0)
+    # first iterate k, then m, then n
+    # PUTS
+    for idx, (n, m) in iterprod(num_strikes, num_expiries):
+        overv = overviews[m - 1, n - 1, 1] # (T,)
 
-    # final shape: (1, T, 2*N*M, 5)
+        deltas[1, idx - 1] = [overv[t]["delta"] if overv[t] is not None else 0.0 for t in range(T)]
+        gammas[1, idx - 1] = [overv[t]["gamma"] if overv[t] is not None else 0.0 for t in range(T)]
+
+        expiries[1, idx - 1] = normalized_expiries[m - 1]
+        strikes[1, idx - 1] = moneynesses[n - 1]
+
+    volume = np.moveaxis(volume, 0, 2)
+    volume = np.moveaxis(volume, 0, 1)
+    input_struct = np.array([volume.T, deltas.T, gammas.T, expiries.T, strikes.T])
+
+    # final shape: (5, T, num_contracts, 2) # 2: calls/puts
 
     return input_struct, y_true_dict
 

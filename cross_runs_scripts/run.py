@@ -1,4 +1,7 @@
+
+# CHANGE THESE PARAMETERS WHEN NEEDED
 from cross_runs_scripts.params_long_2 import params
+
 from pathlib import Path
 from debug import Debugger
 from cross_excitation import cross_excitation
@@ -17,5 +20,6 @@ debugger = Debugger(mode=dmode)
 cross_excitation(params=params, save=True, savedir=results_dir, debugger=debugger)
 
 """
+RUN:
 python cross_runs_scripts/run.py
 """

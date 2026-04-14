@@ -49,6 +49,7 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             # Greeks
             delta = np.exp(-q * T) * norm.cdf(d1)
+            print('COMPUTED DELTA WITH q:', q, 'T:', T, 'd1:', d1)
             gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
             vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) * 0.01  # Scaled for 1% change in volatility
             theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
@@ -56,7 +57,12 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                     q * S * np.exp(-q * T) * norm.cdf(d1)) / 365  # Per day
             rho = K * T * np.exp(-r * T) * norm.cdf(d2) * 0.01  # Scaled for 1% change in interest rate
 
-            return np.round(call_price, 2), np.round(delta, 2), np.round(gamma, 2), np.round(vega, 2), np.round(theta, 2), np.round(rho, 2)
+            #return np.round(call_price, 2), np.round(delta, 2), np.round(gamma, 2), np.round(vega, 2), np.round(theta, 2), np.round(rho, 2)
+            return (
+                call_price, delta,
+                gamma, vega,
+                theta, rho
+            )
         
         d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
@@ -79,11 +85,15 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
             theta_put = theta_call + r * K * np.exp(-r * T) - q * S * np.exp(-q * T)
             rho_put = rho_call - K * T * np.exp(-r * T)
 
-            return np.round(put_price, 2), np.round(delta_put, 2), np.round(gamma_put, 2), np.round(vega_put, 2), np.round(theta_put, 2), np.round(rho_put, 2)
+            #return np.round(put_price, 2), np.round(delta_put, 2), np.round(gamma_put, 2), np.round(vega_put, 2), np.round(theta_put, 2), np.round(rho_put, 2)
+            return (
+                put_price, delta_put, gamma_put,
+                vega_put, theta_put, rho_put
+            )
 
         call_price = black_scholes_call(S, K, T, r, q, sigma)
         put_price = call_price - S * np.exp(-q * T) + K * np.exp(-r * T)
-        return np.round(put_price, 2)
+        return put_price
         
     def rev(a):        
         n = len(a)
@@ -462,6 +472,9 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                                         sigma=max(assetdata[1, T_current], 0.01), # cap to some lower bound
                                         greeks=True
                 )
+
+            print('DELTA:', delta)
+            print('GAMMA:', gamma)
                 
             intrinsic = max(
                 assetdata[0, T_current] - params.strike_prices[chosen_strike], 0

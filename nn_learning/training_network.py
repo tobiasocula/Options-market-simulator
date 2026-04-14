@@ -2,15 +2,13 @@ import tensorflow as tf
 import numpy as np
 from pathlib import Path
 import json
+from keras import backend as K
+import pandas as pd
 import sys
 from nn_learning.loss_funcs import *
+from keras.layers import Dense, TimeDistributed, Lambda, Multiply, Dropout, LSTM, Softmax
 tf.debugging.enable_check_numerics()
 
-"""
-  File "C:\Users\tobia\AppData\Roaming\Python\Python311\site-packages\keras\src\layers\input_spec.py", line 245, in assert_input_compatibility
-    raise ValueError(
-ValueError: Input 0 of layer "functional" is incompatible with the layer: expected shape=(None, 23, 64, 5), found shape=(1, 20, 64, 5)
-"""
 
 def iterprod(*args):
 
@@ -31,6 +29,7 @@ def iterprod(*args):
 
     yield count, iter_idx
 
+# NOT USED
 def pad_contracts(input_struct, C_max):
     """
     input_struct: (T, C_subset, F)
@@ -45,77 +44,28 @@ def pad_contracts(input_struct, C_max):
     # mask: 1 = real contract, 0 = padding
     mask = np.zeros((T, C_max, 1))
     mask[:, :C_subset, :] = 1.0
-
     return padded, mask
 
-def random_contract_subset(input_struct, max_contracts):
-    _, T, N, F = input_struct.shape # N = amount of contracts, 2*M*N
-    
-    idx = np.random.choice(N, size=max_contracts, replace=False)
-    return input_struct[0, :, idx, :]
+
 
 def build_parameter_network(T, num_contracts):
     # Main input for volumes, deltas, gammas
 
-    inputs = tf.keras.layers.Input(shape=(T, num_contracts, 5), name="input") # volume, delta, gamma, moneyness, normalized_time_till_expiry
-    mask_input = tf.keras.layers.Input(shape=(T, num_contracts, 1), name="mask")
-
-    """
-    # Reshape main input features
-    x = tf.keras.layers.Reshape((T, num_contracts, 5))(inputs)  # Shape: (batch_size, T, num_contracts, 5)
-
-    # Reshape for LSTM layers
-    x = tf.keras.layers.Reshape((T, num_contracts * 5))(x)  # Shape: (batch_size, T, num_contracts * 19)
-
-    # LSTM layers
-    x = tf.keras.layers.LSTM(32, return_sequences=True)(x)  # Shape: (batch_size, T, 32)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    x = tf.keras.layers.LSTM(32)(x)  # Shape: (batch_size, 32)
-
-    # Dense layers
-    x = tf.keras.layers.Dense(128, activation="relu")(x)
-    x = tf.keras.layers.Dropout(0.2)(x)
-
-    """
-    # timedistributed layer maps each (contract, timestamp) to a higher dimensional
-    # embedding to learn more about the underlying structure
-    x = tf.keras.layers.TimeDistributed(
-        tf.keras.layers.Dense(32, activation="relu")
-    )(inputs)
-
-    x = tf.keras.layers.TimeDistributed(
-            tf.keras.layers.Dense(32, activation="relu")
-        )(x)
-
-    # aggregation over contracts: learn general contract space layout, not
-    # individual contracts themselves
-    #x = tf.keras.layers.Lambda(lambda t: tf.reduce_mean(t, axis=2))(x)
+    inputs = tf.keras.layers.Input(shape=(T, num_contracts, 6), name="input") # volume, delta, gamma, moneyness, normalized_time_till_expiry
     
-    # attn = tf.keras.layers.Dense(1, activation="tanh")(x)
-    # weights = tf.keras.layers.Softmax(axis=2)(attn)
+    x = TimeDistributed(Dense(32, activation="relu"))(inputs)
+    x = TimeDistributed(Dense(32, activation="relu"))(x)
 
-    # x = tf.keras.layers.Multiply()([x, weights])
-    # x = tf.keras.layers.Lambda(lambda t: tf.reduce_sum(t, axis=2))(x)
+    attn = Dense(1)(x)
+    weights = Softmax(axis=2)(attn)
 
-    attn = tf.keras.layers.Dense(1, activation="tanh")(x)
+    x = Multiply()([x, weights])
 
-    # apply mask: set padded logits to very negative
-    attn = tf.keras.layers.Add()([
-        attn,
-        (1.0 - mask_input) * (-1e9)
-    ])
+    x = Lambda(sum_over_contracts)(x)  # (batch, T, 32)
 
-    weights = tf.keras.layers.Softmax(axis=2)(attn)
-
-    x = tf.keras.layers.Multiply()([x, weights])
-    x = tf.keras.layers.Lambda(lambda t: tf.reduce_sum(t, axis=2))(x)
-
-    # shape: (batch, T, 32)
-
-    # temporal learning
-    x = tf.keras.layers.LSTM(32, return_sequences=True)(x)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    x = tf.keras.layers.LSTM(32)(x)
+    x = LSTM(32, return_sequences=True)(x)
+    x = Dropout(0.2)(x)
+    x = LSTM(32)(x)
 
     # Outputs
     outputs = {
@@ -144,7 +94,7 @@ def build_parameter_network(T, num_contracts):
 
     #model = tf.keras.Model(inputs=inputs, outputs=outputs)
     model = tf.keras.Model(
-        inputs=[inputs, mask_input],
+        inputs=inputs,
         outputs=outputs
     )
 
@@ -196,54 +146,62 @@ def convert_to_float(obj):
     else:
         return obj
 
+first_quote = pd.to_datetime("2023-03-01 16:00:00") # treat as starting date
+last_quote = pd.to_datetime("2023-03-31 16:00:00") # treat as last date
+ref_diff = (last_quote - first_quote).total_seconds()
+
+T = 30
+num_strikes = 10
+num_expiries = 10
+
+num_contracts = 2 * num_expiries * num_strikes
 
 def prepare_input_data(dir):
 
     assetdata = np.load(dir / "assetdata.npy", allow_pickle=True) # shape (2, T)
     spot_prices = assetdata[0, :] # (T)
-    
-    spot_prices = spot_prices[:23]
 
-    param_target = json.loads(json_data[dir.name])
+    param_target = json_data[dir.name]
+    actual_params = json.loads(param_target["params"])
 
     param_target = convert_to_float(param_target)
 
-    expiry_dates = param_target["expiry_dts"]
-    strike_prices = param_target["strike_prices"]
-
-    last_expiry = max(expiry_dates) # in seconds after open
+    expiry_dates = pd.to_datetime(param_target["expiries"])
+    strike_prices = convert_to_float(param_target["strikes"])
 
     normalized_expiries = np.empty((len(expiry_dates), T))
     moneynesses = np.empty((len(strike_prices), T))
 
     for t in range(T):
-        delta_t = t * param_target["dt"] # timestep
-        normalized_expiries[:, t] = [(expiry - delta_t) / last_expiry for expiry in expiry_dates]
+        delta_t = t * actual_params["dt"] # timestep
+        #normalized_expiries[:, t] = [(expiry - first_quote).total_seconds() / ref_diff for expiry in expiry_dates]
+        normalized_expiries[:, t] = [delta_t / (expiry - first_quote).total_seconds() for expiry in expiry_dates]
         moneynesses[:, t] = [(strike - spot) / spot for strike, spot in zip(strike_prices, spot_prices)]
 
+
     param_target_flat = np.array([
-        param_target["mu_intensity"],
-        param_target["alpha_moneyness"],
-        param_target["alpha_time"],
-        param_target["beta"],
-        param_target["gamma_t"],
-        param_target["gamma_m"],
-        param_target["volume_base"],
-        param_target["w_volume"],
-        param_target["rho_self"],
-        *param_target["tau"][0],
-        *param_target["tau"][1],
-        param_target["buy_order_base_param"],
-        param_target["buy_order_imbalance_param"],
-        param_target["limit_order_base_param"],
-        param_target["limit_order_vol_param"],
-        param_target["limit_order_spread_param"],
-        param_target["limit_order_distance_param"],
-        param_target["kappa"],
-        param_target["theta"],
-        param_target["mu"],
-        param_target["xi"],
-        param_target["rho"],
+        actual_params["mu_intensity"],
+        actual_params["alpha_moneyness"],
+        actual_params["alpha_time"],
+        actual_params["beta"],
+        actual_params["gamma_t"],
+        actual_params["gamma_m"],
+        actual_params["volume_base"],
+        actual_params["w_volume"],
+        actual_params["rho_self"],
+        *actual_params["tau"][0],
+        *actual_params["tau"][1],
+        actual_params["buy_order_base_param"],
+        actual_params["buy_order_imbalance_param"],
+        actual_params["limit_order_base_param"],
+        actual_params["limit_order_vol_param"],
+        actual_params["limit_order_spread_param"],
+        actual_params["limit_order_distance_param"],
+        actual_params["kappa"],
+        actual_params["theta"],
+        actual_params["mu"],
+        actual_params["xi"],
+        actual_params["rho"],
 
     ])
 
@@ -273,39 +231,51 @@ def prepare_input_data(dir):
 
 
     volume = np.load(dir / "traded_volumes.npy", allow_pickle=True) # shape (M, N, 2, T)
-    volume = volume[:, :, :, :23] # cut off
-    volume = np.reshape(volume, shape=(num_expiries * num_strikes * 2, T)).T # shape (T, M*N*2)
+    volume = np.reshape(volume, shape=(2, num_expiries * num_strikes, T)) # shape (T, 2, M*N) ;;
 
     overviews = np.load(dir / "overviews.npy", allow_pickle=True) # shape (M, N, 2, T)
-    overviews = overviews[:, :, :, :23]
 
-    deltas = np.empty((num_expiries * num_strikes * 2, T)) # shape (M * N * 2, T)
-    gammas = np.empty((num_expiries * num_strikes * 2, T)) # shape (M * N * 2, T)
+    idx_global = 0
 
-    deltas = deltas[:, :23]
-    gammas = gammas[:, :23]
+    volume_all   = np.zeros((num_contracts, T))
+    delta_all    = np.zeros((num_contracts, T))
+    gamma_all    = np.zeros((num_contracts, T))
+    expiry_all   = np.zeros((num_contracts, T))
+    moneyness_all= np.zeros((num_contracts, T))
+    cp_flag_all  = np.zeros((num_contracts, T))
 
-    # convert (N/M, T) structure to (M * N * 2, T) structure (for expiries and strikes)
-    expiries = np.empty((num_expiries * num_strikes * 2, T))
-    strikes = np.empty((num_expiries * num_strikes * 2, T))
+    for cp in range(2):  # 0 = call, 1 = put
+        cp_flag = 1.0 if cp == 0 else -1.0
 
-    # first iterate k, then m, then n
-    for idx, (n, m, k) in iterprod(num_strikes, num_expiries, 2):
-    
-        overv = overviews[m - 1, n - 1, k - 1] # (T,)
+        for idx, (n, m) in iterprod(num_strikes, num_expiries):
+            overv = overviews[m - 1, n - 1, cp]
 
-        deltas[idx - 1] = [overv[t]["delta"] if overv[t] is not None else 0.0 for t in range(T)]
-        gammas[idx - 1] = [overv[t]["gamma"] if overv[t] is not None else 0.0 for t in range(T)]
+            for t in range(T):
+                if overv[t] is not None:
+                    delta_all[idx_global, t] = overv[t]["delta"]
+                    gamma_all[idx_global, t] = overv[t]["gamma"]
+                else:
+                    delta_all[idx_global, t] = 0.0
+                    gamma_all[idx_global, t] = 0.0
 
-        expiries[idx - 1] = normalized_expiries[m - 1]
-        strikes[idx - 1] = moneynesses[n - 1]
+            expiry_all[idx_global]    = normalized_expiries[m - 1]
+            moneyness_all[idx_global] = moneynesses[n - 1]
+            volume_all[idx_global]    = volume[cp, idx - 1]
 
-    input_struct = np.array([volume, deltas.T, gammas.T, expiries.T, strikes.T])
-    input_struct = np.moveaxis(input_struct, 1, 0)
-    input_struct = np.moveaxis(input_struct, 2, 1)
-    input_struct = np.expand_dims(input_struct, axis=0)
+            cp_flag_all[idx_global]   = cp_flag  # ✅ THIS IS THE KEY
 
-    # final shape: (1, T, 2*N*M, 5)
+            idx_global += 1
+
+    input_struct = np.stack([
+        volume_all.T,
+        delta_all.T,
+        gamma_all.T,
+        moneyness_all.T,
+        expiry_all.T,
+        cp_flag_all.T
+    ], axis=-1)
+
+    # input_struct shape: (30, 200, 6)
 
     return input_struct, y_true_dict
 
@@ -331,12 +301,8 @@ if __name__ == "__main__":
 
     num_epochs = 10
 
-    T = 23
-    num_strikes = 4
-    num_expiries = 4
-
-    C_max = 64
-    model = build_parameter_network(T, C_max)
+    num_contracts = 2 * num_strikes * num_expiries
+    model = build_parameter_network(T, num_contracts)
 
     # model.fit uses dimensions: (batch_size, T, num_contracts)
     
@@ -347,7 +313,6 @@ if __name__ == "__main__":
     #print('loaded paramset')
 
     loss_hist = {"loss": [], "val_loss": []} # each entry is list of lists
-
     train_pct = 0.9
 
     for epoch in range(num_epochs):
@@ -366,38 +331,24 @@ if __name__ == "__main__":
         for dir in dirs_train:
             
             input_struct, y_true_dict = prepare_input_data(dir)
-            subset = random_contract_subset(input_struct, max_contracts=20)  # (T, 20, F)
-            padded, mask = pad_contracts(subset, C_max=64)  # (T, 64, F)
-
-            input_struct = np.expand_dims(padded, axis=0)   # (1, T, 64, F)
-            mask = np.expand_dims(mask, axis=0)             # (1, T, 64, 1)
-
-            #batch_loss = model.train_on_batch(input_struct, y_true_dict)
-            batch_loss = model.train_on_batch(
-                [input_struct, mask],
-                y_true_dict
-            )
+            # input struct shape: (30, 200, 6)
+            input_struct = np.expand_dims(input_struct, axis=0)
+            batch_loss = model.train_on_batch(input_struct, y_true_dict)
+            batch_loss = [float(nparray) for nparray in batch_loss]
             epoch_losses.append(batch_loss)
 
         for dir in dirs_validate:
 
             input_struct, y_true_dict = prepare_input_data(dir)
-            
-            subset = random_contract_subset(input_struct, max_contracts=20)  # (T, 20, F)
-            padded, mask = pad_contracts(subset, C_max=64)  # (T, 64, F)
-
-            input_struct = np.expand_dims(padded, axis=0)   # (1, T, 64, F)
-            mask = np.expand_dims(mask, axis=0)             # (1, T, 64, 1)
-
-            #batch_loss = model.test_on_batch(input_struct, y_true_dict)
-            batch_loss = model.train_on_batch(
-                [input_struct, mask],
-                y_true_dict
-            )       
+            input_struct = np.expand_dims(input_struct, axis=0)
+            batch_loss = model.test_on_batch(input_struct, y_true_dict)
+            batch_loss = [float(nparray) for nparray in batch_loss]
             epoch_val_losses.append(batch_loss)
 
-        print('appending epoch losses:', epoch_losses)
-        print('appending epoch val losses:', epoch_val_losses)
+        #print('appending epoch losses:', epoch_losses)
+        #print('appending epoch val losses:', epoch_val_losses)
+        print('lengths:', len(epoch_val_losses), len(epoch_val_losses[0]), len(epoch_val_losses[1]))
+        print('lengths:', len(epoch_losses), len(epoch_losses[0]), len(epoch_losses[1]))
 
         loss_hist["loss"].append(epoch_losses)
         loss_hist["val_loss"].append(epoch_val_losses)
@@ -406,10 +357,10 @@ if __name__ == "__main__":
 
     print('lost hist:'); print(loss_hist)
 
-    with open(Path.cwd() / "nn_learning" / "loss_history", "w") as f:
+    with open(Path.cwd() / "nn_learning" / "loss_history.json", "w") as f:
         json.dump(loss_hist, f)
-
+    print('done')
 
 """
-python nn_learning/training_network.py
+python nn_learning/training_network_2.py
 """

@@ -10,10 +10,10 @@ import sys
 
 # Define parameter ranges
 param_ranges = {
-    "mu_intensity": [1e-4, 1e-3],
+    "mu_intensity": [5e-5, 1e-4],
     "alpha_moneyness": [0.010, 0.020],
     "alpha_time": [5e-6, 5e-5],
-    "beta": [0.05, 0.5],
+    "beta": [0.2, 0.7],
     "gamma_t": [5e-5, 5e-4],
     "gamma_m": [12.0, 20.0],
     "volume_base": [1.0, 2.0],
@@ -56,15 +56,16 @@ lhs_samples = lhs(len(param_ranges), samples=num_samples) # (num_samples, num_pa
 for i, (low, high) in enumerate(param_ranges.values()):
     lhs_samples[:, i] = low + lhs_samples[:, i] * (high - low)
 
-# print('mu intensities:')
-# print(lhs_samples[0:10, 0])
-# sys.exit()
-
 choose_num_expiries = 10
 choose_num_strikes = 10
 using_strikes = np.load(Path.cwd() / "nn_learning" / "strikes_being_used.npy")
 using_expiries = np.load(Path.cwd() / "nn_learning" / "expiries_being_used.npy")
 using_expiries = pd.to_datetime(using_expiries)
+
+print('using expiries:'); print(using_expiries)
+print('using strikes:'); print(using_strikes)
+
+first_expiry = using_expiries.min() - pd.Timedelta(days=2) # to exclude T = 0
 
 """
 old strike sampling = too agressive
@@ -81,7 +82,7 @@ def sample_strikes():
 
 def sample_strikes():
     spot = np.random.normal(130, 5)
-    sigma = 1.0  # controls spread (tune this!)
+    sigma = 1.0  # controls spread
 
     distances = (using_strikes - spot) / spot
     weights = np.exp(-(distances**2) / (2 * sigma**2))
@@ -95,7 +96,7 @@ last_quote = pd.to_datetime("2023-03-31 16:00:00") # treat as last date
 delta_t = (last_quote - first_quote).days # 30
 
 def sample_expiries():
-    tau = 10
+    tau = 40
     distances = (using_expiries - first_quote).days
     prob_dist = np.exp(-distances / tau)
     prob_dist /= np.sum(prob_dist) # sum should already be about one, but just to be sure
@@ -107,7 +108,9 @@ for idx in range(lhs_samples.shape[0]):
     save = Path.cwd() / "nn_learning" / "training_data" / f"set_{idx}"
     save.mkdir(exist_ok=True)
 
-    #chosen_strikes, chosen_expiries = random_subset()
+    this_expiries_dts = sample_expiries() # generates pd.datetime values    
+    this_expiries = [(x - first_expiry).days*3600*24 for x in this_expiries_dts]
+    this_strikes = sample_strikes()
 
     params = CrossExcitation(
     # TIME SCALE
@@ -140,8 +143,8 @@ for idx in range(lhs_samples.shape[0]):
     # OPTION GRID
     #strike_prices = [120.0, 130.0, 140.0, 150.0],
     #expiry_dts    = [86400 * k for k in [5, 15, 30, 45]], # 5, 15, 30, 45 days resp.
-    strike_prices = chosen_strikes,
-    expiry_dts = chosen_expiries,
+    strike_prices = this_strikes,
+    expiry_dts = this_expiries,
 
     # FINANCE MODEL (leave as is)
     risk_free     = 0.04,
@@ -180,7 +183,11 @@ for idx in range(lhs_samples.shape[0]):
         # flag failed run
         continue
 
-    json_data[f"set_{idx}"] = params.model_dump_json()
+    json_data[f"set_{idx}"] = {
+        "params": params.model_dump_json(),
+        "expiries": [str(x) for x in this_expiries_dts.tolist()],
+        "strikes": this_strikes.tolist()
+    }
 
 with open(json_path, "w") as f:
     json.dump(json_data, f)

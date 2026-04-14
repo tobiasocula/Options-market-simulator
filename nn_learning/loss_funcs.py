@@ -2,6 +2,10 @@ import tensorflow as tf
 import keras
 
 @keras.saving.register_keras_serializable()
+def sum_over_contracts(x):
+    return tf.reduce_sum(x, axis=2)
+
+@keras.saving.register_keras_serializable()
 def relative_mse(y_true, y_pred):
     return tf.reduce_mean(tf.square((y_true - y_pred) / (y_true + 1e-6)))
 
@@ -26,5 +30,6 @@ custom_objects = {
     'weighted_mse_2': weighted_mse(weight=2),
     'weighted_mse_3': weighted_mse(weight=3),
     'bounded_mse': bounded_mse,
-    'log_mse': log_mse
+    'log_mse': log_mse,
+    "sum_over_contracts": sum_over_contracts
 }

@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 # change with different params
 from cross_runs_scripts.params_long_2 import params
 
+# RUN:
 # streamlit run streamlit_cross_excitation/Overview.py
 
 st.set_page_config(

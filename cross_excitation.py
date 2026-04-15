@@ -49,7 +49,6 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
 
             # Greeks
             delta = np.exp(-q * T) * norm.cdf(d1)
-            print('COMPUTED DELTA WITH q:', q, 'T:', T, 'd1:', d1)
             gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
             vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) * 0.01  # Scaled for 1% change in volatility
             theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
@@ -472,9 +471,6 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                                         sigma=max(assetdata[1, T_current], 0.01), # cap to some lower bound
                                         greeks=True
                 )
-
-            print('DELTA:', delta)
-            print('GAMMA:', gamma)
                 
             intrinsic = max(
                 assetdata[0, T_current] - params.strike_prices[chosen_strike], 0

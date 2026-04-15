@@ -117,20 +117,13 @@ def main():
         )
     )
 
-    st.write("All trades")
+    st.write("All trades (capped at 100)")
 
     max_trade_count = min(100, len(st.session_state.all_trades))
-
-    print(type(st.session_state.all_trades))
-    print(type(st.session_state.all_trades[0]))
-    print(st.session_state.all_trades[0])
-
     alltrades_df = pd.DataFrame(st.session_state.all_trades.tolist()[:max_trade_count],
         columns=["price", "time", "volume", "expiry", "strike", "call/put"])
 
     st.dataframe(alltrades_df)
-
-    print(kernels_calls_df)
 
     st.write("Trading intensities (mean of calls)")
     st.plotly_chart(fig_calls_intensities, key="calls_mean")

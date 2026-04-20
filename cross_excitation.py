@@ -371,8 +371,8 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
                     #debugger.debug(f"delta M: {delta_m}, delta_t: {delta_t}, volume part: {volume_part}, kernel: {kernel}", mode=1)
 
             kernels[this_exp, this_strike, this_type, T_current] = total_kernel
-            if total_adding_term + total_kernel > 0:
-                debugger.debug(f"contributions intensity: adding terms {total_adding_term / (total_adding_term + total_kernel)}, total kernel {total_kernel / (total_adding_term + total_kernel)}", mode=1)
+            #if total_adding_term + total_kernel > 0:
+                #debugger.debug(f"contributions intensity: adding terms {total_adding_term / (total_adding_term + total_kernel)}, total kernel {total_kernel / (total_adding_term + total_kernel)}", mode=1)
 
         #sys.exit()
 

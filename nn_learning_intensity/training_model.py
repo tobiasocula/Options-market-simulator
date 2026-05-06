@@ -1,13 +1,42 @@
+
+# import os
+# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+# os.environ["TF_DISABLE_XLA_JIT"] = "1"
+import os
+
+import tensorflow as tf
+tf.config.optimizer.set_jit(False)
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
+import sys
+# import tensorflow as tf
+# print(tf.config.list_physical_devices('GPU'))
+
+import tensorflow as tf
+
+with tf.device('/GPU:0'):
+    x = tf.random.normal((3000, 3000))
+    y = tf.matmul(x, x)
+
+print("Success:", y.shape)
+
+
 import tensorflow as tf
 import numpy as np
 from pathlib import Path
 import json
 from keras import backend as K
 import pandas as pd
-import sys
-from nn_learning.loss_funcs import *
+
+from loss_funcs import *
 from keras.layers import Dense, TimeDistributed, Lambda, Multiply, Dropout, LSTM, Softmax
-tf.debugging.enable_check_numerics()
+
+"""
+
+source tf_gpu_env/bin/activate
+
+python nn_learning_intensity/training_model.py
+"""
 
 def iterprod(*args):
 
@@ -28,6 +57,16 @@ def iterprod(*args):
 
     yield count, iter_idx
 
+def reshape_for_attention(x):
+    shape = tf.shape(x)
+    batch = shape[0]
+    return tf.reshape(x, (batch * T, num_contracts, 32))
+
+def reshape_back(x):
+    shape = tf.shape(x)
+    batch = shape[0] // T
+    return tf.reshape(x, (batch, T, num_contracts, 32))
+
 def build_model(T, num_contracts):
 
     inputs = tf.keras.Input(shape=(T, num_contracts, 4))
@@ -36,11 +75,17 @@ def build_model(T, num_contracts):
     x = TimeDistributed(Dense(32, activation="relu"))(inputs)
     x = TimeDistributed(Dense(32, activation="relu"))(x)
 
-    # --- CROSS-CONTRACT ATTENTION ---
+    # # --- CROSS-CONTRACT ATTENTION ---
     attn = tf.keras.layers.MultiHeadAttention(num_heads=2, key_dim=32)
-    print("x shape before attention:", x.shape)
+    
+    # # reshape for attention over contracts
+    # x = tf.reshape(x, (-1, num_contracts, 32))
+    # x = attn(x, x)
+    # x = tf.reshape(x, (-1, T, num_contracts, 32))
+
+    x = Lambda(reshape_for_attention)(x)
     x = attn(x, x)
-    print("x shape after attention:", x.shape)
+    x = Lambda(reshape_back)(x)
 
     # reduce contracts AFTER interaction
     x = tf.keras.layers.Lambda(sum_over_contracts)(x)
@@ -68,7 +113,8 @@ def build_model(T, num_contracts):
             "alpha_moneyness": "mae",
             "alpha_time": "mae",
             "beta": "mae"
-        }
+        },
+        run_eagerly=True # disables graph + XLA, avoids ALL JIT issues, more stable but slower runtime
     )
 
     return model
@@ -92,18 +138,26 @@ last_quote = pd.to_datetime("2023-03-31 16:00:00") # treat as last date
 ref_diff = (last_quote - first_quote).total_seconds()
 
 
-def needed_data(dirs):
+def needed_data(dirs, dirs_params):
     # 4 = num_features: [volume, moneyness, expiry, cp_flag]
     
     norm = np.empty((len(dirs), T, num_contracts, 4))
     logmus = []
+    ats = []
+    ams = []
+    betas = []
 
-    for i, dir in enumerate(dirs):
+    for i, (dir, dir_param) in enumerate(zip(dirs, dirs_params)):
 
-        param_target = json_data[dir.name]
-        expiry_dates = pd.to_datetime(param_target["expiries"])
-        strike_prices = convert_to_float(param_target["strikes"])
-        logmu = np.log(json.loads(param_target["params"])["mu_intensity"])
+        with open(dir_param, "r") as f:
+            json_data = json.load(f)
+
+        expiry_dates = pd.to_datetime(json_data["expiries"])
+        strike_prices = convert_to_float(json_data["strikes"])
+        logmu = np.log(json.loads(json_data["params"])["mu_intensity"])
+        beta = json.loads(json_data["params"])["beta"]
+        alpha_t = json.loads(json_data["params"])["alpha_time"]
+        alpha_m = json.loads(json_data["params"])["alpha_moneyness"]
 
         volume = np.load(dir / "traded_volumes.npy", allow_pickle=True) # shape (M, N, 2, T)
         volume_norm = (volume - np.mean(volume)) / (1e-8 + np.std(volume))
@@ -138,10 +192,15 @@ def needed_data(dirs):
         norm[i,:,:,:] = input_struct # (100, 200, 4)
         print('input struct shape:', input_struct.shape)
         logmus.append(logmu)
+        betas.append(beta)
+        ams.append(alpha_m)
+        ats.append(alpha_t)
+        idx_global += 1
 
-    print('norm shape:', norm.shape)
+    return norm, np.array([
+        logmus, ams, ats, betas
+    ])
 
-    return norm, logmus # latter: (num_dirs, T, num_contracts, features)    
 
 num_strikes = 10
 num_expiries = 10
@@ -156,39 +215,53 @@ T = 100
 num_contracts = 2 * num_strikes * num_expiries
 model = build_model(T, num_contracts)
 
-trainset_dir = Path.cwd() / "nn_learning_intensity" / "training_data"
-with open(trainset_dir / "param_info.json", "r") as f:
-    json_data = json.load(f)
+trainset_dir = Path.cwd() / "nn_learning_intensity" / "trainset"
 
 loss_hist = {"loss": [], "val_loss": []} # each entry is list of lists
 train_pct = 0.9
 
-dirs = [d for d in trainset_dir.iterdir() if d.name != "param_info.json"]
-np.random.shuffle(dirs)
+dirs = [d for d in trainset_dir.iterdir() if d.name[0] == "s"]
+dirs_params = [d for d in trainset_dir.iterdir() if d.name[0] == "j"]
+
+ints_dirs = [int(d.name.split('_')[-1]) for d in dirs]
+ints_dirs_params = [int(d.name.split('_')[-1].split('.')[0]) for d in dirs_params]
+all_ints = set(ints_dirs).intersection((set(ints_dirs_params)))
+
+dirs = [d for d in dirs if int(d.name.split('_')[-1]) in all_ints]
+dirs_params = [d for d in dirs_params if int(d.name.split('_')[-1].split('.')[0]) in all_ints]
+
+
+assert len(dirs) == len(dirs_params), f"error: {len(dirs)} vs {len(dirs_params)}"
+idx = np.random.permutation(len(dirs))
+print('idx:'); print(idx)
+dirs = np.array(dirs)
+dirs_params = np.array(dirs_params)
+dirs = dirs[idx]
+dirs_params = dirs_params[idx]
+
 split_idx = int(train_pct * len(dirs))
 dirs_train = dirs[:split_idx]
 dirs_validate = dirs[split_idx:]
+dirs_params_train = dirs_params[:split_idx]
+dirs_params_validate = dirs_params[split_idx:]
 
-X_train, y_train = needed_data(dirs)
+X_train, y_train = needed_data(dirs, dirs_params)
+y_train = y_train.T
 
-print('x train shape:', X_train.shape)
-
-y_true = np.array([
-    [np.log(json.loads(json_data[dir.name]["params"])["mu_intensity"]) for dir in dirs],
-    [np.log(json.loads(json_data[dir.name]["params"])["alpha_moneyness"]) for dir in dirs],
-    [np.log(json.loads(json_data[dir.name]["params"])["alpha_time"]) for dir in dirs]
-]).T
+print('x train shape:', X_train.shape) # (184, 100, 200, 4)
+print('y_train shape:', y_train.shape) # (4, 184)
 
 y_train = {
-    "mu": y_true[:, 0],
-    "alpha_moneyness": y_true[:, 1],
-    "alpha_time": y_true[:, 2]
+    "mu": y_train[:,0],
+    "alpha_moneyness": y_train[:,1],
+    "alpha_time": y_train[:,2],
+    "beta": y_train[:,3],
 }
 
 history = model.fit(
     X_train,
     y_train,
-    batch_size=1,
+    batch_size=10,
     epochs=50,
     validation_split=0.1,
     verbose=1
@@ -209,10 +282,3 @@ with open(save_dir / "val_dirs.json", "w") as f:
 
 model.save(save_dir / "model.keras")
 
-import matplotlib.pyplot as plt
-
-plt.plot(history.history["loss"], label="train")
-plt.plot(history.history["val_loss"], label="val")
-plt.legend()
-plt.title("Loss")
-plt.show()

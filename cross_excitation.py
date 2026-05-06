@@ -320,7 +320,10 @@ def cross_excitation(params: CrossExcitation, save=False, savedir=None,
         dw_v = np.sqrt(dt_years) * (params.rho * z1 + np.sqrt(1 - params.rho**2) * z2)
 
         # update volatility
-        assetdata[1, T_current] = assetdata[1, T_current - 1] + params.kappa * (params.theta - assetdata[1, T_current - 1]) * dt_years + params.xi * np.sqrt(assetdata[1, T_current - 1]) * dw_v
+        assetdata[1, T_current] = max(
+            1e-5,
+            assetdata[1, T_current - 1] + params.kappa * (params.theta - assetdata[1, T_current - 1]) * dt_years + params.xi * np.sqrt(assetdata[1, T_current - 1]) * dw_v
+        )
         # update price
         assetdata[0, T_current] = assetdata[0, T_current - 1] * np.exp((params.mu - 0.5 * assetdata[1, T_current - 1] **2) * dt_years + np.sqrt(assetdata[1, T_current - 1]) * dw_s)
 

@@ -1,7 +1,6 @@
 nn_learning
 nn_learning_intensity/results
-nn_learning_intensity/trainset_alpha_m
-nn_learning_intensity/trainset_mu
-nn_learning_intensity/trainset_beta
 process_real_data
 site
+venv
+tf_gpu_env

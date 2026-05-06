@@ -1,6 +1,8 @@
 import tensorflow as tf
 import keras
 
+
+
 @keras.saving.register_keras_serializable()
 def sum_over_contracts(x):
     return tf.reduce_sum(x, axis=2)

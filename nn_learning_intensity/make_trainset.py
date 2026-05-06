@@ -1,15 +1,18 @@
-import numpy as np
-from pyDOE import lhs
 from pathlib import Path
+import sys
+
+# Add the project root to the Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+import numpy as np
 from cross_excitation import cross_excitation
 from param_class import CrossExcitation
 from debug import Debugger
 import json
 import pandas as pd
-import sys
 
-
-num_samples = 50
 param_ranges = {
     "mu_intensity": [5e-6, 5e-5],
     "alpha_moneyness": [0.010, 0.020],
@@ -17,26 +20,19 @@ param_ranges = {
     "beta": [0.2, 0.7],
 }
 
-lhs_samples = lhs(len(param_ranges), samples=num_samples) # (num_samples, num_params)
-# Scale each column to its range
-for i, (low, high) in enumerate(param_ranges.values()):
-    lhs_samples[:, i] = low + lhs_samples[:, i] * (high - low)
+NUM_SAMPLES = 200
+MU_SAMPLES = np.random.uniform(param_ranges["mu_intensity"][0], param_ranges["mu_intensity"][1], NUM_SAMPLES)
+BETA_SAMPLES = np.random.uniform(param_ranges["beta"][0], param_ranges["beta"][1], NUM_SAMPLES)
+ALPHA_M_SAMPLES = np.random.uniform(param_ranges["alpha_moneyness"][0], param_ranges["alpha_moneyness"][1], NUM_SAMPLES)
+ALPHA_T_SAMPLES = np.random.uniform(param_ranges["alpha_time"][0], param_ranges["alpha_time"][1], NUM_SAMPLES)
 
 dmode = 1
 debugger = Debugger(mode=dmode)
 
-json_path = Path.cwd() / "nn_learning_intensity" / "training_data_exp" / "param_info.json"
-if json_path.exists() and json_path.stat().st_size > 0:
-    with open(json_path, "r") as f:
-        json_data = json.load(f)
-        sys.exit()
-else:
-    json_data = {}
-
 choose_num_expiries = 10
 choose_num_strikes = 10
-using_strikes = np.load(Path.cwd() / "nn_learning" / "strikes_being_used.npy")
-using_expiries = np.load(Path.cwd() / "nn_learning" / "expiries_being_used.npy")
+using_strikes = np.load(Path.cwd() / "nn_learning_intensity" / "strikes_being_used.npy")
+using_expiries = np.load(Path.cwd() / "nn_learning_intensity" / "expiries_being_used.npy")
 using_expiries = pd.to_datetime(using_expiries)
 
 
@@ -67,16 +63,13 @@ def sample_expiries():
 this_expiries_dts = sample_expiries() # generates pd.datetime values    
 this_expiries = [(x - first_expiry).days*3600*24 for x in this_expiries_dts]
 this_strikes = sample_strikes()
-import itertools
+
+
+
 # Scale samples to the parameter ranges
-for idx in range(lhs_samples.shape[0]):
+for idx, (mu, beta, alphat, alpham) in enumerate(zip(MU_SAMPLES, BETA_SAMPLES, ALPHA_T_SAMPLES, ALPHA_M_SAMPLES), 122):
 
-    mu = lhs_samples[idx][0]
-    am = lhs_samples[idx][1]
-    at = lhs_samples[idx][2]
-    beta = lhs_samples[idx][3]
-
-    save = Path.cwd() / "nn_learning_intensity" / "training_data_exp" / f"set_{idx}"
+    save = Path.cwd() / "nn_learning_intensity" / "trainset" / f"set_{idx}"
     save.mkdir(exist_ok=True)
 
     params = CrossExcitation(
@@ -85,8 +78,8 @@ for idx in range(lhs_samples.shape[0]):
     T=100,
 
     # STATIC BASE INTENSITY (per contract)
-    alpha_moneyness = am,
-    alpha_time      =   at,
+    alpha_moneyness = alpham,
+    alpha_time      =   alphat,
     mu_intensity    = mu,
     mu_variation = 0.1,
 
@@ -150,14 +143,16 @@ for idx in range(lhs_samples.shape[0]):
         # flag failed run
         continue
 
-    json_data[f"set_{idx}"] = {
+    json_data = {
         "params": params.model_dump_json(),
         "expiries": [str(x) for x in this_expiries_dts.tolist()],
         "strikes": this_strikes.tolist()
     }
 
-with open(json_path, "w") as f:
-    json.dump(json_data, f)
+    json_path = Path.cwd() / "nn_learning_intensity" / "trainset" / f"json_data_{idx}"
+
+    with open(json_path, "w") as f:
+        json.dump(json_data, f)
 
 """
 python nn_learning_intensity/make_trainset.py

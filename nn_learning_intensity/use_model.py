@@ -1,18 +1,12 @@
 import numpy as np
 from pyDOE import lhs
 from pathlib import Path
-from cross_excitation import cross_excitation
-from param_class import CrossExcitation
-from debug import Debugger
 import json
 import pandas as pd
 import sys
 
-dir = Path.cwd() / "nn_learning_intensity" / "training_data"
-json_path = dir / "param_info.json"
+trainset_dir = Path.cwd() / "nn_learning_intensity" / "trainset"
 
-with open(json_path, "r") as f:
-    json_data = json.load(f)
 
 def iterprod(*args):
 
@@ -55,91 +49,88 @@ first_quote = pd.to_datetime("2023-03-01 16:00:00") # treat as starting date
 last_quote = pd.to_datetime("2023-03-31 16:00:00") # treat as last date
 ref_diff = (last_quote - first_quote).total_seconds()
 
-def prepare_input_data(dir):
+def prepare_input_data(dirs, dirs_params):
 
-    assetdata = np.load(dir / "assetdata.npy", allow_pickle=True) # shape (2, T)
-    spot_prices = assetdata[0, :] # (T)
+    norm = np.empty((len(dirs), T, num_contracts, 4))
+    logmus = []
+    ats = []
+    ams = []
+    betas = []
 
-    param_target = json_data[dir.name]
-    actual_params = json.loads(param_target["params"])
+    for i, (dir, dir_param) in enumerate(zip(dirs, dirs_params)):
 
-    param_target = convert_to_float(param_target)
+        with open(dir_param, "r") as f:
+            json_data = json.load(f)
 
-    expiry_dates = pd.to_datetime(param_target["expiries"])
-    strike_prices = convert_to_float(param_target["strikes"])
+        expiry_dates = pd.to_datetime(json_data["expiries"])
+        strike_prices = convert_to_float(json_data["strikes"])
+        logmu = np.log(json.loads(json_data["params"])["mu_intensity"])
+        beta = json.loads(json_data["params"])["beta"]
+        alpha_t = json.loads(json_data["params"])["alpha_time"]
+        alpha_m = json.loads(json_data["params"])["alpha_moneyness"]
 
-    normalized_expiries = np.empty((len(expiry_dates), T))
-    moneynesses = np.empty((len(strike_prices), T))
+        volume = np.load(dir / "traded_volumes.npy", allow_pickle=True) # shape (M, N, 2, T)
+        volume_norm = (volume - np.mean(volume)) / (1e-8 + np.std(volume))
 
-    for t in range(T):
-        delta_t = t * actual_params["dt"] # timestep
-        normalized_expiries[:, t] = [delta_t / (expiry - first_quote).total_seconds() for expiry in expiry_dates]
-        moneynesses[:, t] = [(strike - spot) / spot for strike, spot in zip(strike_prices, spot_prices)]
+        strikes_norm = (strike_prices - np.mean(strike_prices)) / (1e-8 + np.std(strike_prices))
+        expiries_norm = [(exp - first_quote).total_seconds() / (last_quote - first_quote).total_seconds()
+                         for exp in expiry_dates]
+        
+        idx_global = 0
+        volume_all   = np.zeros((num_contracts, T))
+        expiry_all   = np.zeros((num_contracts, T))
+        moneyness_all= np.zeros((num_contracts, T))
+        cp_flag_all  = np.zeros((num_contracts, T))
+        
+        for cp in range(2):  # 0 = call, 1 = put
+            cp_flag = 1.0 if cp == 0 else -1.0
 
-    param_target_flat = actual_params["mu_intensity"]
+            for _, (n, m) in iterprod(num_strikes, num_expiries):
 
-    volume = np.load(dir / "traded_volumes.npy", allow_pickle=True) # shape (M, N, 2, T)
-    volume = np.reshape(volume, shape=(2, num_expiries * num_strikes, T)) # shape (T, 2, M*N) ;;
+                expiry_all[idx_global]    = expiries_norm[m - 1]
+                moneyness_all[idx_global] = strikes_norm[n - 1]
+                volume_all[idx_global]    = volume_norm[m - 1, n - 1, cp]
+                cp_flag_all[idx_global]   = cp_flag
 
-    overviews = np.load(dir / "overviews.npy", allow_pickle=True) # shape (M, N, 2, T)
+        input_struct = np.stack([
+            volume_all.T,
+            moneyness_all.T,
+            expiry_all.T,
+            cp_flag_all.T
+        ], axis=-1)
 
-    idx_global = 0
+        norm[i,:,:,:] = input_struct # (100, 200, 4)
+        logmus.append(logmu)
+        betas.append(beta)
+        ams.append(alpha_m)
+        ats.append(alpha_t)
+        idx_global += 1
 
-    volume_all   = np.zeros((num_contracts, T))
-    delta_all    = np.zeros((num_contracts, T))
-    gamma_all    = np.zeros((num_contracts, T))
-    expiry_all   = np.zeros((num_contracts, T))
-    moneyness_all= np.zeros((num_contracts, T))
-    cp_flag_all  = np.zeros((num_contracts, T))
-
-    for cp in range(2):  # 0 = call, 1 = put
-        cp_flag = 1.0 if cp == 0 else -1.0
-
-        for idx, (n, m) in iterprod(num_strikes, num_expiries):
-            overv = overviews[m - 1, n - 1, cp]
-
-            for t in range(T):
-                if overv[t] is not None:
-                    delta_all[idx_global, t] = overv[t]["delta"]
-                    gamma_all[idx_global, t] = overv[t]["gamma"]
-                else:
-                    delta_all[idx_global, t] = 0.0
-                    gamma_all[idx_global, t] = 0.0
-
-            expiry_all[idx_global]    = normalized_expiries[m - 1]
-            moneyness_all[idx_global] = moneynesses[n - 1]
-            volume_all[idx_global]    = volume[cp, idx - 1]
-
-            cp_flag_all[idx_global]   = cp_flag
-
-            idx_global += 1
-
-    input_struct = np.stack([
-        volume_all.T,
-        delta_all.T,
-        gamma_all.T,
-        moneyness_all.T,
-        expiry_all.T,
-        cp_flag_all.T
-    ], axis=-1)
-
-    y_true = np.array([[np.log(actual_params["mu_intensity"])]])
-
-    return input_struct, y_true
+    return norm, np.array([
+        logmus, ams, ats, betas
+    ])
 
 import tensorflow as tf
-from nn_learning.loss_funcs import custom_objects
-model_path = Path.cwd() / "nn_learning_intensity" / "results" / "mu_model.keras"
+from loss_funcs import *
+
+model_path = Path.cwd() / "nn_learning_intensity" / "results" / "model.keras"
 
 model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
 
-for d in dir.iterdir():
-    if d.name == "param_info.json":
-        continue
-    input_struct, y_true = prepare_input_data(d)
-    input_struct = np.expand_dims(input_struct, axis=0)  # shape (1, 100, 200, 6)
-    results = model.predict(input_struct)
-    print("predicted:", results, "versus real:", y_true)
-    
-    
-    
+dirs = [d for d in trainset_dir.iterdir() if d.name[0] == "s"]
+dirs_params = [d for d in trainset_dir.iterdir() if d.name[0] == "j"]
+
+ints_dirs = [int(d.name.split('_')[-1]) for d in dirs]
+ints_dirs_params = [int(d.name.split('_')[-1].split('.')[0]) for d in dirs_params]
+all_ints = set(ints_dirs).intersection((set(ints_dirs_params)))
+
+dirs = [d for d in dirs if int(d.name.split('_')[-1]) in all_ints]
+dirs_params = [d for d in dirs_params if int(d.name.split('_')[-1].split('.')[0]) in all_ints]
+
+x, y = prepare_input_data(dirs, dirs_params)
+print(y.shape) # (4, 184)
+print(x.shape) # (184, 100, 200, 4)
+
+results = model.predict(x)
+print(len(results))
+

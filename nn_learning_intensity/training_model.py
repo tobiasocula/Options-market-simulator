@@ -57,15 +57,7 @@ def iterprod(*args):
 
     yield count, iter_idx
 
-def reshape_for_attention(x):
-    shape = tf.shape(x)
-    batch = shape[0]
-    return tf.reshape(x, (batch * T, num_contracts, 32))
 
-def reshape_back(x):
-    shape = tf.shape(x)
-    batch = shape[0] // T
-    return tf.reshape(x, (batch, T, num_contracts, 32))
 
 def build_model(T, num_contracts):
 
@@ -77,15 +69,10 @@ def build_model(T, num_contracts):
 
     # # --- CROSS-CONTRACT ATTENTION ---
     attn = tf.keras.layers.MultiHeadAttention(num_heads=2, key_dim=32)
-    
-    # # reshape for attention over contracts
-    # x = tf.reshape(x, (-1, num_contracts, 32))
-    # x = attn(x, x)
-    # x = tf.reshape(x, (-1, T, num_contracts, 32))
 
-    x = Lambda(reshape_for_attention)(x)
+    x = ReshapeForAttention(T, num_contracts)(x)
     x = attn(x, x)
-    x = Lambda(reshape_back)(x)
+    x = ReshapeBack(T, num_contracts)(x)
 
     # reduce contracts AFTER interaction
     x = tf.keras.layers.Lambda(sum_over_contracts)(x)

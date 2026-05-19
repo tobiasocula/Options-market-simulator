@@ -1,8 +1,53 @@
 import tensorflow as tf
 import keras
 
+class ReshapeForAttention(tf.keras.layers.Layer):
 
+    def __init__(self, T, num_contracts, **kwargs):
+        super().__init__(**kwargs)
+        self.T = T
+        self.num_contracts = num_contracts
 
+    def call(self, x):
+        batch = tf.shape(x)[0]
+        return tf.reshape(
+            x,
+            (batch * self.T, self.num_contracts, 32)
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "T": self.T,
+            "num_contracts": self.num_contracts
+        })
+        return config
+    
+    import tensorflow as tf
+
+class ReshapeBack(tf.keras.layers.Layer):
+
+    def __init__(self, T, num_contracts, **kwargs):
+        super().__init__(**kwargs)
+        self.T = T
+        self.num_contracts = num_contracts
+
+    def call(self, x):
+        batch = tf.shape(x)[0] // self.T
+
+        return tf.reshape(
+            x,
+            (batch, self.T, self.num_contracts, 32)
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "T": self.T,
+            "num_contracts": self.num_contracts
+        })
+        return config
+    
 @keras.saving.register_keras_serializable()
 def sum_over_contracts(x):
     return tf.reduce_sum(x, axis=2)
@@ -33,5 +78,7 @@ custom_objects = {
     'weighted_mse_3': weighted_mse(weight=3),
     'bounded_mse': bounded_mse,
     'log_mse': log_mse,
-    "sum_over_contracts": sum_over_contracts
+    "sum_over_contracts": sum_over_contracts,
+    "ReshapeBack": ReshapeBack,
+    "ReshapeForAttention": ReshapeForAttention
 }

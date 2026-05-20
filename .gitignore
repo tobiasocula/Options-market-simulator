@@ -4,3 +4,4 @@ process_real_data/
 site
 venv/
 tf_gpu_env/
+*.npy

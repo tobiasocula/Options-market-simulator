@@ -130,7 +130,18 @@ dirs_params = [d for d in dirs_params if int(d.name.split('_')[-1].split('.')[0]
 x, y = prepare_input_data(dirs, dirs_params)
 print(y.shape) # (4, 184)
 print(x.shape) # (184, 100, 200, 4)
+labels = ["mu","alpha_m","alpha_t","beta"]
 
 results = model.predict(x)
-print(len(results))
+for i in range(4):
+    l = labels[i]
+    real_vals = y[i]
+    pred_vals = results[i]
+    print(l,':')
+    print('REAL')
+    print(real_vals)
+    print('PRED')
+    print(pred_vals)
+    print()
+    
 

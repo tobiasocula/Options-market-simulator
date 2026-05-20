@@ -235,8 +235,8 @@ dirs_params_validate = dirs_params[split_idx:]
 X_train, y_train = needed_data(dirs, dirs_params)
 y_train = y_train.T
 
-print('x train shape:', X_train.shape) # (184, 100, 200, 4)
-print('y_train shape:', y_train.shape) # (4, 184)
+print('x train shape:', X_train.shape) # (184, 100, 200, 4) = (batch_size, T, num_contracts, features)
+print('y_train shape:', y_train.shape) # (4, 184) = (features, batch_size)
 
 y_train = {
     "mu": y_train[:,0],

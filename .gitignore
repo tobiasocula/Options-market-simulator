@@ -1,6 +1,6 @@
-nn_learning
-nn_learning_intensity/trainset
-process_real_data
+nn_learning/
+nn_learning_intensity/trainset/
+process_real_data/
 site
-venv
-tf_gpu_env
+venv/
+tf_gpu_env/

@@ -61,25 +61,70 @@ def iterprod(*args):
 
 def build_model(T, num_contracts):
 
-    inputs = tf.keras.Input(shape=(T, num_contracts, 4))
+    inputs = tf.keras.layers.Input(
+        shape=(T, num_contracts, 4),
+        name="input"
+    )
 
-    # --- CONTRACT ENCODING ---
+    mask_input = tf.keras.layers.Input(
+        shape=(T, num_contracts),
+        name="mask"
+    )
+
+    # CONTRACT ENCODING
     x = TimeDistributed(Dense(32, activation="relu"))(inputs)
     x = TimeDistributed(Dense(32, activation="relu"))(x)
 
-    # # --- CROSS-CONTRACT ATTENTION ---
-    attn = tf.keras.layers.MultiHeadAttention(num_heads=2, key_dim=32)
-
     x = ReshapeForAttention(T, num_contracts)(x)
-    x = attn(x, x)
+
+    mask_reshaped = tf.reshape(
+        mask_input,
+        (-1, num_contracts)
+    )
+
+    attention_mask = tf.expand_dims(
+        mask_reshaped,
+        axis=1
+    )
+
+    # --- CROSS CONTRACT ATTENTION ---
+    attn = tf.keras.layers.MultiHeadAttention(
+        num_heads=2,
+        key_dim=32
+    )
+
+    x = attn(
+        x,
+        x,
+        attention_mask=attention_mask
+    )
+
+    # --- RESHAPE BACK ---
     x = ReshapeBack(T, num_contracts)(x)
 
-    # reduce contracts AFTER interaction
-    x = tf.keras.layers.Lambda(sum_over_contracts)(x)
+    # --- MASK PADDED CONTRACTS ---
+    mask_expanded = tf.expand_dims(
+        mask_input,
+        axis=-1
+    )
+
+    x = x * mask_expanded
+
+    x = x * mask_expanded
+
+    sum_x = tf.reduce_sum(x, axis=2)
+
+    count = tf.reduce_sum(
+        mask_expanded,
+        axis=2
+    ) + 1e-8
+
+    x = sum_x / count
 
     # --- TIME MODEL ---
     x = LSTM(32)(x)
 
+        
     # --- MULTI-HEAD OUTPUT ---
     mu = Dense(1, name="mu")(x)
     alpha_m = Dense(1, name="alpha_moneyness")(x)
@@ -238,6 +283,8 @@ y_train = y_train.T
 print('x train shape:', X_train.shape) # (184, 100, 200, 4) = (batch_size, T, num_contracts, features)
 print('y_train shape:', y_train.shape) # (4, 184) = (features, batch_size)
 
+mask = np.ones((T, num_contracts), dtype=np.float32)
+
 y_train = {
     "mu": y_train[:,0],
     "alpha_moneyness": y_train[:,1],
@@ -246,7 +293,7 @@ y_train = {
 }
 
 history = model.fit(
-    X_train,
+    [X_train,mask],
     y_train,
     batch_size=10,
     epochs=50,

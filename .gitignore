@@ -5,3 +5,4 @@ site
 venv/
 tf_gpu_env/
 *.npy
+nn_learning_intensity/
